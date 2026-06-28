@@ -73,14 +73,13 @@ using namespace eth;
 static size_t getTotalPhysAvailableMemory()
 {
 #if defined(__APPLE__) || defined(__MACOSX)
-    vm_size_t page_size;
-    vm_statistics64_data_t vm_stats;
-    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    host_page_size(mach_host_self(), &page_size);
-    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
-            reinterpret_cast<host_info64_t>(&vm_stats), &count) != KERN_SUCCESS)
+    // Use total physical RAM — macOS reclaims cached/inactive pages on demand,
+    // so free_count alone massively understates usable memory.
+    uint64_t memsize = 0;
+    size_t len = sizeof(memsize);
+    if (sysctlbyname("hw.memsize", &memsize, &len, nullptr, 0) != 0)
         return 0;
-    return static_cast<size_t>(vm_stats.free_count) * page_size;
+    return static_cast<size_t>(memsize);
 #elif defined(__linux__)
     long pages = sysconf(_SC_AVPHYS_PAGES);
     if (pages == -1L)
@@ -196,7 +195,8 @@ bool CPUMiner::initDevice()
     kern_return_t kr = thread_policy_set(
         mach_thread, THREAD_AFFINITY_POLICY,
         reinterpret_cast<thread_policy_t>(&policy), THREAD_AFFINITY_POLICY_COUNT);
-    if (kr != KERN_SUCCESS)
+    // KERN_NOT_SUPPORTED (46) is normal on Apple Silicon — affinity is advisory only.
+    if (kr != KERN_SUCCESS && kr != KERN_NOT_SUPPORTED)
         cwarn << "cp-" << m_index << " could not set thread affinity hint (kr=" << kr << ")";
 #elif defined(__linux__)
     cpu_set_t cpuset;
