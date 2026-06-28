@@ -10,7 +10,6 @@ set(SOURCES
 	getwork/EthGetworkClient.h getwork/EthGetworkClient.cpp
 )
 
-hunter_add_package(OpenSSL)
 find_package(OpenSSL REQUIRED)
 
 add_library(poolprotocols ${SOURCES})

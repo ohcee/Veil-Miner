@@ -9,6 +9,7 @@ set(sources
     lib/ethash/ethash.cpp
     lib/ethash/managed.cpp
     lib/ethash/progpow.cpp
+    lib/ethash/primes.c
     lib/keccak/keccak.c
     lib/keccak/keccakf1600.c
     lib/keccak/keccakf800.c

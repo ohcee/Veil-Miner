@@ -5,24 +5,12 @@ include(cmake/cable/bootstrap.cmake)
 include(CableBuildInfo)
 include(CableBuildType)
 include(CableToolchains)
-include(HunterGate)
-
-include(defaults/HunterCacheServers)
 
 cable_configure_toolchain(DEFAULT cxx11)
-
-set(HUNTER_CONFIGURATION_TYPES Release CACHE STRING "Build type of Hunter packages")
-set(HUNTER_JOBS_NUMBER 6 CACHE STRING "Number of parallel builds used by Hunter")
-HunterGate(
-    URL "https://github.com/ruslo/hunter/archive/v0.23.214.tar.gz"
-    SHA1 "e14bc153a7f16d6a5eeec845fb0283c8fad8c358"
-	LOCAL
-)
+cable_set_build_type(DEFAULT Release CONFIGURATION_TYPES Release RelWithDebInfo)
 
 project(veilminer)
 set(PROJECT_VERSION 1.1.3)
-
-cable_set_build_type(DEFAULT Release CONFIGURATION_TYPES Release RelWithDebInfo)
 
 option(ETHASHCL "Build with OpenCL mining" ON)
 option(ETHASHCUDA "Build with CUDA mining" ON)
@@ -60,14 +48,19 @@ function(configureProject)
 	endif()
 endfunction()
 
-hunter_add_package(Boost COMPONENTS system filesystem thread)
-find_package(Boost CONFIG REQUIRED COMPONENTS system filesystem thread)
+set(BOOST_ROOT "/opt/homebrew/Cellar/boost@1.85/1.85.0_3")
+find_package(Boost REQUIRED COMPONENTS system filesystem thread)
 
-hunter_add_package(jsoncpp)
-find_package(jsoncpp CONFIG REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+add_library(jsoncpp_lib_static INTERFACE IMPORTED)
+target_include_directories(jsoncpp_lib_static INTERFACE ${JSONCPP_INCLUDE_DIRS})
+target_link_libraries(jsoncpp_lib_static INTERFACE ${JSONCPP_LINK_LIBRARIES})
+# Make <json/json.h> resolvable globally (jsoncpp installs under include/json/)
+include_directories(${JSONCPP_INCLUDE_DIRS})
 
-# Use the Veil-specific ethash/progpow implementation (correct DAG constants)
-# instead of the Hunter-fetched generic cpp-ethash package.
+find_package(OpenSSL REQUIRED)
+include_directories(${OPENSSL_INCLUDE_DIR})
 
 configureProject()
 
