@@ -23,6 +23,10 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libstdc++ -fcolor-diagnostics -Qunused-arguments")
 	endif()
 
+	if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcpu=apple-m1")
+	endif()
+
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 
 	# declare Windows Vista requirement

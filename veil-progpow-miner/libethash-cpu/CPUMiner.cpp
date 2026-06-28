@@ -27,6 +27,12 @@ along with veilminer.  If not, see <http://www.gnu.org/licenses/>.
 #include <error.h>
 #include <sched.h>
 #include <unistd.h>
+#elif defined(__APPLE__) || defined(__MACOSX)
+#include <sys/sysctl.h>
+#include <sys/types.h>
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#include <pthread.h>
 #endif
 
 #include <libethcore/Farm.h>
@@ -67,7 +73,14 @@ using namespace eth;
 static size_t getTotalPhysAvailableMemory()
 {
 #if defined(__APPLE__) || defined(__MACOSX)
-#error "TODO: Function CPUMiner getTotalPhysAvailableMemory() on MAXOSX not implemented"
+    vm_size_t page_size;
+    vm_statistics64_data_t vm_stats;
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    host_page_size(mach_host_self(), &page_size);
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+            reinterpret_cast<host_info64_t>(&vm_stats), &count) != KERN_SUCCESS)
+        return 0;
+    return static_cast<size_t>(vm_stats.free_count) * page_size;
 #elif defined(__linux__)
     long pages = sysconf(_SC_AVPHYS_PAGES);
     if (pages == -1L)
@@ -115,7 +128,11 @@ unsigned CPUMiner::getNumDevices()
     }
     return cpus;
 #elif defined(__APPLE__) || defined(__MACOSX)
-#error "TODO: Function CPUMiner::getNumDevices() on MAXOSX not implemented"
+    int ncpu = 0;
+    size_t len = sizeof(ncpu);
+    if (sysctlbyname("hw.logicalcpu", &ncpu, &len, nullptr, 0) != 0 || ncpu <= 0)
+        return 1;
+    return static_cast<unsigned>(ncpu);
 #elif defined(__linux__)
     long cpus_available;
     cpus_available = sysconf(_SC_NPROCESSORS_ONLN);
@@ -171,7 +188,16 @@ bool CPUMiner::initDevice()
            << " Memory : " << dev::getFormattedMemory((double)m_deviceDescriptor.totalMemory);
 
 #if defined(__APPLE__) || defined(__MACOSX)
-#error "TODO: Function CPUMiner::initDevice() on MAXOSX not implemented"
+    // macOS (including Apple Silicon ARM) does not expose hard CPU affinity.
+    // THREAD_AFFINITY_POLICY provides a scheduling hint that keeps sibling
+    // miner threads off the same physical core when possible.
+    thread_affinity_policy_data_t policy = {static_cast<integer_t>(m_deviceDescriptor.cpCpuNumer + 1)};
+    thread_port_t mach_thread = pthread_mach_thread_np(pthread_self());
+    kern_return_t kr = thread_policy_set(
+        mach_thread, THREAD_AFFINITY_POLICY,
+        reinterpret_cast<thread_policy_t>(&policy), THREAD_AFFINITY_POLICY_COUNT);
+    if (kr != KERN_SUCCESS)
+        cwarn << "cp-" << m_index << " could not set thread affinity hint (kr=" << kr << ")";
 #elif defined(__linux__)
     cpu_set_t cpuset;
     int err;
@@ -212,6 +238,22 @@ bool CPUMiner::initDevice()
  */
 bool CPUMiner::initEpoch_internal()
 {
+    // m_epochContext is populated by Farm::setWork() before this is called.
+    // Log the epoch transition and DAG size so the operator can see it growing.
+    cpulog << "Epoch " << m_epochContext.epochNumber
+           << "  DAG size: " << dev::getFormattedMemory((double)m_epochContext.dagSize)
+           << "  Light cache: " << dev::getFormattedMemory((double)m_epochContext.lightSize);
+
+    size_t availMem = getTotalPhysAvailableMemory();
+    if (availMem > 0 && m_epochContext.dagSize > availMem)
+    {
+        cwarn << "cp-" << m_index
+              << " WARNING: DAG size (" << dev::getFormattedMemory((double)m_epochContext.dagSize)
+              << ") exceeds available memory ("
+              << dev::getFormattedMemory((double)availMem) << "). Mining will fail.";
+        return false;
+    }
+
     return true;
 }
 
