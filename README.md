@@ -106,4 +106,3 @@ make -j$(nproc)
 - **DAG size**: At epoch 218 (block ~3.9M) the DAG is ~4.55 GB. You need at least 6 GB of RAM for comfortable CPU mining. On Apple Silicon the unified memory is shared with the OS so 8 GB systems will be tight — 16 GB+ recommended.
 - **Apple Silicon thread affinity**: macOS does not expose hard CPU affinity on ARM. The miner uses scheduling hints instead; this is normal and expected.
 - **DAG epoch parameters**: This miner uses Veil's correct epoch length (5525 blocks before block 2,100,000; 8175 blocks after). The DAG resets to epoch 0 at block 2,100,000 and then grows more slowly (~750 MB/year).
-- **Hashrate**: On an M1 Mac mini (8-core) expect ~1.7–1.8 Kh/s total across all cores.
