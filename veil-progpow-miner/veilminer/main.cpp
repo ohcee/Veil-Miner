@@ -759,7 +759,7 @@ public:
              << "    -U,--cuda           Mine/Benchmark using CUDA only" << endl
 #endif
 #if ETH_ETHASHCPU
-             << "    --cpu               Development ONLY ! (NO MINING)" << endl
+             << "    --cpu               Mine using CPU only (Apple Silicon / ARM)" << endl
 #endif
              << endl
              << "Connection options :" << endl

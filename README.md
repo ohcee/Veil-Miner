@@ -15,7 +15,7 @@ Veil ProgPOW miner with CPU mining support for Apple Silicon (ARM) and GPU minin
 
 ### macOS (Apple Silicon — M1/M2/M3/M4)
 ```bash
-brew install cmake boost@1.85 jsoncpp openssl@3 cli11 pkg-config git
+brew install cmake boost@1.85 jsoncpp openssl@3 pkg-config git
 ```
 
 ### Linux (Ubuntu/Debian)
@@ -153,7 +153,7 @@ Binary: `veilminer\Release\veilminer.exe`
 
 ### GPU — OpenCL (AMD / Intel)
 ```bash
-./build/veilminer/veilminer --cl -P stratum+tcp://WALLET_ADDRESS@POOL_HOST:PORT
+./build/veilminer/veilminer --opencl -P stratum+tcp://WALLET_ADDRESS@POOL_HOST:PORT
 ```
 
 ### GPU — CUDA (Nvidia)

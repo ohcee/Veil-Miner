@@ -48,7 +48,19 @@ function(configureProject)
 	endif()
 endfunction()
 
-set(BOOST_ROOT "/opt/homebrew/Cellar/boost@1.85/1.85.0_3")
+# On macOS, boost@1.85 is keg-only and not on the default search path.
+# Auto-detect the Homebrew prefix so brew patch bumps don't break the build,
+# and leave BOOST_ROOT unset elsewhere (Linux/Windows use system/vcpkg Boost).
+if (APPLE)
+    execute_process(
+        COMMAND brew --prefix boost@1.85
+        OUTPUT_VARIABLE BREW_BOOST_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if (BREW_BOOST_PREFIX AND EXISTS "${BREW_BOOST_PREFIX}")
+        set(BOOST_ROOT "${BREW_BOOST_PREFIX}")
+    endif()
+endif()
 find_package(Boost REQUIRED COMPONENTS system filesystem thread)
 
 find_package(PkgConfig REQUIRED)
