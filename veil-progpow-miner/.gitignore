@@ -75,3 +75,10 @@ node_modules/
 # vscode
 .vscode/
 /.vs
+
+# Claude Code
+.claude/
+
+# cmake dependency clones (fetched during build, not vendored)
+cmake/cable/
+cmake/Hunter/disabled-mode/
