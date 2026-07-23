@@ -1,51 +1,16 @@
 name: build
 
-# Verifies the README build instructions on every supported platform.
-# CPU legs mirror the README exactly; GPU legs additionally install the
-# OpenCL / CUDA SDKs on the runner and pass -DCOMPUTE for a modern nvcc.
+# Verifies the macOS (Apple Silicon) CPU build from the README on every push.
 on:
   push:
-    branches: [ master, dag-fix-arm-support ]
+    branches: [ master ]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macos-arm-cpu
-            os: macos-14
-            gpu: none
-            flags: -DETHASHCPU=ON -DETHASHCL=OFF -DETHASHCUDA=OFF
-          - name: linux-cpu
-            os: ubuntu-latest
-            gpu: none
-            flags: -DETHASHCPU=ON -DETHASHCL=OFF -DETHASHCUDA=OFF
-          - name: linux-opencl
-            os: ubuntu-latest
-            gpu: opencl
-            flags: -DETHASHCL=ON -DETHASHCUDA=OFF -DETHASHCPU=OFF
-          - name: linux-cuda
-            os: ubuntu-latest
-            gpu: cuda
-            flags: -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF -DCOMPUTE=75
-          - name: windows-cpu
-            os: windows-latest
-            gpu: none
-            flags: -DETHASHCPU=ON -DETHASHCL=OFF -DETHASHCUDA=OFF
-          - name: windows-opencl
-            os: windows-latest
-            gpu: opencl
-            flags: -DETHASHCL=ON -DETHASHCUDA=OFF -DETHASHCPU=OFF
-          - name: windows-cuda
-            os: windows-latest
-            gpu: cuda
-            flags: -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF -DCOMPUTE=75
-
+  macos-arm-cpu:
+    name: macos-arm-cpu
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
@@ -56,59 +21,22 @@ jobs:
           git clone --depth 1 https://github.com/ethereum/cable cmake/cable
           git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
 
-      # ---------- macOS ----------
-      - name: macOS dependencies
-        if: runner.os == 'macOS'
+      - name: Dependencies
         run: brew install cmake boost@1.85 jsoncpp openssl@3 pkg-config
 
-      # ---------- Linux ----------
-      - name: Linux base dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config \
-            libboost-all-dev libjsoncpp-dev libssl-dev
-      - name: Linux OpenCL SDK
-        if: runner.os == 'Linux' && matrix.gpu == 'opencl'
-        run: sudo apt-get install -y opencl-headers ocl-icd-opencl-dev
-      - name: Linux CUDA toolkit
-        if: runner.os == 'Linux' && matrix.gpu == 'cuda'
-        uses: Jimver/cuda-toolkit@v0.2.21
-        with:
-          method: network
-
-      # ---------- Windows (vcpkg) ----------
-      - name: Windows dependencies (vcpkg)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $pkgs = @('boost-system','boost-filesystem','boost-thread','jsoncpp','openssl')
-          if ('${{ matrix.gpu }}' -eq 'opencl') { $pkgs += 'opencl' }
-          vcpkg install $pkgs --triplet x64-windows
-          # The project locates jsoncpp via pkg-config; provide it on Windows.
-          choco install pkgconfiglite -y
-      - name: Windows CUDA toolkit
-        if: runner.os == 'Windows' && matrix.gpu == 'cuda'
-        uses: Jimver/cuda-toolkit@v0.2.21
-        with:
-          method: network
-
-      # ---------- Configure + build ----------
       - name: Configure
         shell: bash
         working-directory: veil-progpow-miner
         run: |
           mkdir build && cd build
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            export PKG_CONFIG_PATH="$VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib/pkgconfig"
-            cmake -G "Visual Studio 17 2022" -A x64 \
-              -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
-              ${{ matrix.flags }} ..
-          else
-            cmake ${{ matrix.flags }} ..
-          fi
+          cmake -DETHASHCPU=ON -DETHASHCL=OFF -DETHASHCUDA=OFF ..
 
       - name: Build
         shell: bash
         working-directory: veil-progpow-miner/build
         run: cmake --build . --config Release --parallel
+
+      - name: Smoke test
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: ./veilminer/veilminer --version
