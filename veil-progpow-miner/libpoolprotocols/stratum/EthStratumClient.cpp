@@ -1330,6 +1330,18 @@ void EthStratumClient::processResponse(Json::Value& responseObject)
                     uint64_t iBlockHeight = jPrm.get(Json::Value::ArrayIndex(prmIdx++), "").asInt64();
                     uint32_t nBlockTargetBits =  strtoul(jPrm.get(Json::Value::ArrayIndex(prmIdx++), "").asString().c_str(), nullptr, 16);
 
+                    // The node is authoritative for the ProgPoW epoch and serves it here as
+                    // pprpcepoch. Deriving it from block height instead needs the DAG reset
+                    // height, which differs on every network.
+                    int iEpoch = -1;
+                    if (jPrm.isValidIndex(Json::Value::ArrayIndex(prmIdx)))
+                    {
+                        Json::Value jEpoch =
+                            jPrm.get(Json::Value::ArrayIndex(prmIdx++), Json::Value::null);
+                        if (jEpoch.isIntegral())
+                            iEpoch = jEpoch.asInt();
+                    }
+
                     arith_uint256 hashTarget = arith_uint256().SetCompact(nBlockTargetBits);
                     std::string sBlockTarget = hashTarget.GetHex();
 
@@ -1364,6 +1376,7 @@ void EthStratumClient::processResponse(Json::Value& responseObject)
                     m_current_timestamp = std::chrono::steady_clock::now();
                     m_current.startNonce = m_session->extraNonce;
                     m_current.block = iBlockHeight;
+                    m_current.epoch = iEpoch;
 
                     // This will signal to dispatch the job
                     // at the end of the transmission.

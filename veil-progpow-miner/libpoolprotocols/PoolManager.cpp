@@ -166,10 +166,12 @@ void PoolManager::setClientHandlers()
         int _currentEpoch = m_currentWp.epoch;
         bool newEpoch = (_currentEpoch == -1);
 
-        // In EthereumStratum/2.0.0 epoch number is set in session
+        // In EthereumStratum/2.0.0 epoch number is set in session.
+        // Veil serves the epoch with every job and leaves the seed hash empty, so an
+        // unchanged seed cannot be used to detect an epoch rollover on that path.
         if (!newEpoch)
         {
-            if (p_client->getConnection()->StratumMode() == 3)
+            if (p_client->getConnection()->StratumMode() == 3 || wp.epoch != -1)
                 newEpoch = (wp.epoch != m_currentWp.epoch);
             else
                 newEpoch = (wp.seed != m_currentWp.seed);
