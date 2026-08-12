@@ -5,28 +5,23 @@ include(cmake/cable/bootstrap.cmake)
 include(CableBuildInfo)
 include(CableBuildType)
 include(CableToolchains)
-include(HunterGate)
-
-include(defaults/HunterCacheServers)
 
 cable_configure_toolchain(DEFAULT cxx11)
-
-set(HUNTER_CONFIGURATION_TYPES Release CACHE STRING "Build type of Hunter packages")
-set(HUNTER_JOBS_NUMBER 6 CACHE STRING "Number of parallel builds used by Hunter")
-HunterGate(
-    URL "https://github.com/ruslo/hunter/archive/v0.23.214.tar.gz"
-    SHA1 "e14bc153a7f16d6a5eeec845fb0283c8fad8c358"
-	LOCAL
-)
+cable_set_build_type(DEFAULT Release CONFIGURATION_TYPES Release RelWithDebInfo)
 
 project(veilminer)
 set(PROJECT_VERSION 1.1.3)
 
-cable_set_build_type(DEFAULT Release CONFIGURATION_TYPES Release RelWithDebInfo)
-
 option(ETHASHCL "Build with OpenCL mining" ON)
 option(ETHASHCUDA "Build with CUDA mining" ON)
-option(ETHASHCPU "Build with CPU mining (only for development)" OFF)
+# On Apple Silicon, CUDA/OpenCL are unavailable; default to CPU mining
+if (APPLE AND (CMAKE_SYSTEM_PROCESSOR MATCHES "arm64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64"))
+    set(ETHASHCL OFF CACHE BOOL "Build with OpenCL mining" FORCE)
+    set(ETHASHCUDA OFF CACHE BOOL "Build with CUDA mining" FORCE)
+    option(ETHASHCPU "Build with CPU mining" ON)
+else()
+    option(ETHASHCPU "Build with CPU mining (only for development)" OFF)
+endif()
 option(ETHDBUS "Build with D-Bus support" OFF)
 option(APICORE "Build with API Server support" ON)
 option(DEVBUILD "Log developer metrics" OFF)
@@ -53,14 +48,31 @@ function(configureProject)
 	endif()
 endfunction()
 
-hunter_add_package(Boost COMPONENTS system filesystem thread)
-find_package(Boost CONFIG REQUIRED COMPONENTS system filesystem thread)
+# On macOS, boost@1.85 is keg-only and not on the default search path.
+# Auto-detect the Homebrew prefix so brew patch bumps don't break the build,
+# and leave BOOST_ROOT unset elsewhere (Linux/Windows use system/vcpkg Boost).
+if (APPLE)
+    execute_process(
+        COMMAND brew --prefix boost@1.85
+        OUTPUT_VARIABLE BREW_BOOST_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if (BREW_BOOST_PREFIX AND EXISTS "${BREW_BOOST_PREFIX}")
+        set(BOOST_ROOT "${BREW_BOOST_PREFIX}")
+    endif()
+endif()
+find_package(Boost REQUIRED COMPONENTS system filesystem thread)
 
-hunter_add_package(jsoncpp)
-find_package(jsoncpp CONFIG REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+add_library(jsoncpp_lib_static INTERFACE IMPORTED)
+target_include_directories(jsoncpp_lib_static INTERFACE ${JSONCPP_INCLUDE_DIRS})
+target_link_libraries(jsoncpp_lib_static INTERFACE ${JSONCPP_LINK_LIBRARIES})
+# Make <json/json.h> resolvable globally (jsoncpp installs under include/json/)
+include_directories(${JSONCPP_INCLUDE_DIRS})
 
-hunter_add_package(ethash)
-find_package(ethash CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
+include_directories(${OPENSSL_INCLUDE_DIR})
 
 configureProject()
 
@@ -70,7 +82,7 @@ message("-- Build ${CMAKE_BUILD_TYPE} / ${CMAKE_SYSTEM_NAME}")
 message("----------------------------------------------------------------- components")
 message("-- ETHASHCL         Build OpenCL components                      ${ETHASHCL}")
 message("-- ETHASHCUDA       Build CUDA components                        ${ETHASHCUDA}")
-message("-- ETHASHCPU        Build CPU components (only for development)  ${ETHASHCPU}")
+message("-- ETHASHCPU        Build CPU components                         ${ETHASHCPU}")
 message("-- ETHDBUS          Build D-Bus components                       ${ETHDBUS}")
 message("-- APICORE          Build API Server components                  ${APICORE}")
 message("-- DEVBUILD         Build with dev logging                       ${DEVBUILD}")
@@ -85,6 +97,7 @@ endif()
 
 cable_add_buildinfo_library(PROJECT_NAME ${PROJECT_NAME})
 
+add_subdirectory(libethash-veil)
 add_subdirectory(libprogpow)
 add_subdirectory(libdevcore)
 add_subdirectory(libethcore)

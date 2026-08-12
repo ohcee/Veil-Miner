@@ -7,6 +7,16 @@ using namespace std;
 using namespace dev;
 using namespace eth;
 
+// Mirrors CChainParams::GetProgPowEpochNumber() from Veil core chainparams.cpp.
+// Before block HEIGHT_PROGPOW_DAG_SIZE_REDUCTION the epoch length is EPOCH_LENGTH (5525).
+// At that height the DAG resets to epoch 0 and grows at EPOCH_LENGTH_750MB_PER_YEAR (8175).
+static int GetProgPowEpochNumber(int blockNumber)
+{
+    if (blockNumber >= HEIGHT_PROGPOW_DAG_SIZE_REDUCTION)
+        return (blockNumber - HEIGHT_PROGPOW_DAG_SIZE_REDUCTION) / EPOCH_LENGTH_750MB_PER_YEAR;
+    return blockNumber > 0 ? blockNumber / EPOCH_LENGTH : 0;
+}
+
 PoolManager* PoolManager::m_this = nullptr;
 
 PoolManager::PoolManager(PoolSettings _settings)
@@ -177,7 +187,7 @@ void PoolManager::setClientHandlers()
             if (wp.epoch == -1)
             {
                 if (m_currentWp.block > 0)
-                    m_currentWp.epoch = m_currentWp.block / EPOCH_LENGTH;
+                    m_currentWp.epoch = GetProgPowEpochNumber(m_currentWp.block);
                 else
                     m_currentWp.epoch = ethash::find_epoch_number(
                         ethash::hash256_from_bytes(m_currentWp.seed.data()));

@@ -12,6 +12,7 @@
 #endif
 
 using boost::asio::ip::tcp;
+using namespace boost::placeholders;
 
 EthStratumClient::EthStratumClient(int worktimeout, int responsetimeout)
   : PoolClient(),

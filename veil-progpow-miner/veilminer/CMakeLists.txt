@@ -13,10 +13,11 @@ if(MSVC)
 	target_sources(${EXECUTABLE} PRIVATE veilminer.rc)
 endif()
 
-hunter_add_package(CLI11)
-find_package(CLI11 CONFIG REQUIRED)
+# Use bundled CLI11 v1.9.1 header — system CLI11 is v2.x with incompatible API
+add_library(CLI11_bundled INTERFACE)
+target_include_directories(CLI11_bundled INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(veilminer PRIVATE ethcore poolprotocols devcore veilminer-buildinfo CLI11::CLI11 Boost::system)
+target_link_libraries(veilminer PRIVATE ethcore poolprotocols devcore veilminer-buildinfo CLI11_bundled Boost::system)
 
 if(ETHDBUS)
 	find_package(PkgConfig)

@@ -20,7 +20,10 @@
 // random math instructions per loop
 #define PROGPOW_CNT_MATH        18
 
-#define EPOCH_LENGTH            5625
+// Veil epoch parameters (must match Veil core chainparams.cpp / ethash.h)
+#define EPOCH_LENGTH                    5525   // blocks per epoch before DAG size reduction
+#define EPOCH_LENGTH_750MB_PER_YEAR     8175   // blocks per epoch after DAG size reduction
+#define HEIGHT_PROGPOW_DAG_SIZE_REDUCTION 2100000  // mainnet block where DAG resets to epoch 0
 
 class ProgPow
 {

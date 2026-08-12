@@ -29,6 +29,7 @@
 #include <random>
 
 #include "CommonData.h"
+#include <boost/container_hash/hash.hpp>
 
 namespace dev
 {

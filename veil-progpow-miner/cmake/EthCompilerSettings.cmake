@@ -13,7 +13,7 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
 
 elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
 
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-unknown-pragmas -Wextra")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-unknown-pragmas -Wextra -Wno-enum-constexpr-conversion")
 
     eth_add_cxx_compiler_flag_if_supported(-ffunction-sections)
     eth_add_cxx_compiler_flag_if_supported(-fdata-sections)
@@ -21,6 +21,10 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
 
 	if ("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libstdc++ -fcolor-diagnostics -Qunused-arguments")
+	endif()
+
+	if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcpu=apple-m1")
 	endif()
 
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")

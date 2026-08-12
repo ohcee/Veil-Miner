@@ -1,0 +1,42 @@
+name: build
+
+# Verifies the macOS (Apple Silicon) CPU build from the README on every push.
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos-arm-cpu:
+    name: macos-arm-cpu
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Dependencies
+        run: brew install cmake boost@1.85 jsoncpp openssl@3 pkg-config
+
+      - name: Configure
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          mkdir build && cd build
+          cmake -DETHASHCPU=ON -DETHASHCL=OFF -DETHASHCUDA=OFF ..
+
+      - name: Build
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: cmake --build . --config Release --parallel
+
+      - name: Smoke test
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: ./veilminer/veilminer --version

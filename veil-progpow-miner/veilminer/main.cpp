@@ -15,7 +15,7 @@
     along with veilminer.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <CLI/CLI.hpp>
+#include "CLI11.hpp"
 
 #include <veilminer/buildinfo.h>
 #include <condition_variable>
@@ -759,7 +759,7 @@ public:
              << "    -U,--cuda           Mine/Benchmark using CUDA only" << endl
 #endif
 #if ETH_ETHASHCPU
-             << "    --cpu               Development ONLY ! (NO MINING)" << endl
+             << "    --cpu               Mine using CPU only (Apple Silicon / ARM)" << endl
 #endif
              << endl
              << "Connection options :" << endl
