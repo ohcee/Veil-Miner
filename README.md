@@ -23,6 +23,14 @@ brew install cmake boost@1.85 openssl@3 pkg-config git
 sudo apt-get install build-essential cmake libboost-all-dev libssl-dev git
 ```
 
+### Nvidia GPUs (CUDA, any platform)
+- **CUDA Toolkit 12.8 or newer** if you want to build CUDA support. 12.8 is the
+  first release that can target Blackwell (RTX 50-series, `sm_120`).
+- Stay on **12.x**. CUDA 13 dropped offline compilation for `sm_50` through
+  `sm_70`, so a 13.x build will not run on GTX 900/10-series or Volta cards.
+- Older toolkits still build: the arch list trims itself to whatever the
+  detected toolkit accepts. You just will not get Blackwell support below 12.8.
+
 ### Windows
 - [Visual Studio 2019 or 2022](https://visualstudio.microsoft.com/) with the **Desktop development with C++** workload
 - [CMake 3.16+](https://cmake.org/download/)
@@ -183,4 +191,14 @@ veilminer\Release\veilminer.exe --cuda -P stratum+tcp://WALLET_ADDRESS@POOL_HOST
 - **DAG size**: At epoch 218 (block ~3.9M) the DAG is ~4.55 GB. GPU miners need a card with at least 6 GB VRAM. CPU miners need at least 8 GB RAM (16 GB+ recommended on macOS due to unified memory sharing with the OS).
 - **DAG epoch parameters**: This miner uses Veil's correct epoch length — 5525 blocks before block 2,100,000, then 8175 blocks after. The DAG resets to epoch 0 at block 2,100,000 and grows more slowly (~750 MB/year) from there.
 - **Apple Silicon thread affinity**: macOS ARM does not support hard CPU affinity. The miner uses scheduling hints instead — this is normal and no action is needed.
+- **RTX 50-series (Blackwell)**: needs an **R570 or newer driver** at runtime, plus a
+  binary built with CUDA 12.8+. On a working setup the miner logs
+  `Pre-compiled period N CUDA ProgPow kernel for arch 12.0` on startup. If you see a
+  compile error from NVRTC instead, the build used a toolkit older than 12.8.
+- **CUDA runtime dependency**: the ProgPoW search kernel is compiled at runtime by
+  NVRTC, so `libnvrtc.so.12` (Linux) or the matching `nvrtc64_*.dll` (Windows) must be
+  present alongside a normal driver install. Windows release zips must ship that DLL.
+- **Which cards a build supports**: CUDA builds bake in SASS for Maxwell through
+  Blackwell (`sm_50` to `sm_120`) plus PTX for the newest arch, so future cards can
+  still JIT. Pin a single architecture with `-DCOMPUTE=120` to build faster.
 - **Hashrate reference**: M1 Mac mini (8-core) ~1.8 Kh/s CPU. Nvidia RTX 3080 ~15–20 Kh/s GPU.

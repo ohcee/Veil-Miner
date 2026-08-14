@@ -1,6 +1,7 @@
 name: build
 
-# Verifies the macOS (Apple Silicon) CPU build from the README on every push.
+# Verifies the macOS (Apple Silicon) CPU build and the Linux CUDA build on
+# every push. Runners have no GPU, so the CUDA job is compile-only.
 on:
   push:
     branches: [ master ]
@@ -60,4 +61,114 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: veilminer-macos-arm64
+          path: veil-progpow-miner/build/veilminer/veilminer
+
+  linux-cuda:
+    name: linux-cuda (${{ matrix.cuda }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 12.x is the widest window: Maxwell through Blackwell in one binary.
+        # CUDA 13 dropped sm_50..sm_70 offline compilation, and GTX 900/10-series
+        # cards are still common on small-coin networks, so it is not the default.
+        cuda: ["12.9.1"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libboost-all-dev libssl-dev
+
+      - name: Install CUDA ${{ matrix.cuda }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.cuda }}"
+          pkgver="$(echo "$ver" | cut -d. -f1-2 | tr '.' '-')"
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          # Just the compiler and the headers/libs this actually links. The full
+          # cuda-toolkit metapackage is several GB and mostly unused here.
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-${pkgver} \
+            cuda-cudart-dev-${pkgver} \
+            cuda-nvrtc-dev-${pkgver} \
+            cuda-driver-dev-${pkgver}
+          cudadir="/usr/local/cuda-$(echo "$ver" | cut -d. -f1-2)"
+          echo "CUDA_PATH=$cudadir" >> "$GITHUB_ENV"
+          echo "CUDAToolkit_ROOT=$cudadir" >> "$GITHUB_ENV"
+          echo "CUDACXX=$cudadir/bin/nvcc" >> "$GITHUB_ENV"
+          echo "$cudadir/bin" >> "$GITHUB_PATH"
+
+      - name: nvcc version
+        run: nvcc --version
+
+      - name: Configure
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          mkdir build && cd build
+          cmake -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
+
+      - name: Build
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: cmake --build . --config Release --parallel
+
+      - name: Confirm Blackwell SASS is in the archive
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          set -euo pipefail
+          lib=$(find . -name 'libethash-cuda.a' | head -1)
+          echo "inspecting $lib"
+          cuobjdump --list-elf "$lib" | head -40
+          if ! cuobjdump --list-elf "$lib" | grep -q 'sm_120'; then
+            echo "::error::no sm_120 cubin in libethash-cuda.a, RTX 50-series unsupported"
+            exit 1
+          fi
+          echo "sm_120 present"
+
+      # The runner has no NVIDIA driver, so the real libcuda.so.1 is absent and
+      # the binary would not even load. Point the loader at the toolkit stub,
+      # which resolves the symbols and reports no device, exactly the path a
+      # user with a broken driver install hits.
+      - name: Smoke test
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          set -euo pipefail
+          stub="$RUNNER_TEMP/cudastub"
+          mkdir -p "$stub"
+          ln -sf "$CUDA_PATH/lib64/stubs/libcuda.so" "$stub/libcuda.so.1"
+          export LD_LIBRARY_PATH="$stub:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ldd ./veilminer/veilminer
+          ./veilminer/veilminer --version
+
+      # Zero GPUs must be reported and exited cleanly, not crashed on.
+      - name: Smoke test with zero GPUs
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          set -euo pipefail
+          stub="$RUNNER_TEMP/cudastub"
+          export LD_LIBRARY_PATH="$stub:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ./veilminer/veilminer --list-devices
+          echo "exited cleanly"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-linux-x64-cuda-${{ matrix.cuda }}
           path: veil-progpow-miner/build/veilminer/veilminer

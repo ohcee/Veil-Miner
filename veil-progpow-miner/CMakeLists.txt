@@ -112,6 +112,12 @@ include_directories(${OPENSSL_INCLUDE_DIR})
 
 configureProject()
 
+# CUDA has to be a real language for CMake to drive nvcc. FindCUDA and
+# cuda_add_library, which this used to rely on, are gone as of CMake 4.
+if (ETHASHCUDA)
+	enable_language(CUDA)
+endif()
+
 message("----------------------------------------------------------------------------")
 message("-- CMake ${CMAKE_VERSION}")
 message("-- Build ${CMAKE_BUILD_TYPE} / ${CMAKE_SYSTEM_NAME}")
