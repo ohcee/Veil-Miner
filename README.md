@@ -15,12 +15,12 @@ Veil ProgPOW miner with CPU mining support for Apple Silicon (ARM) and GPU minin
 
 ### macOS (Apple Silicon — M1/M2/M3/M4)
 ```bash
-brew install cmake boost@1.85 jsoncpp openssl@3 pkg-config git
+brew install cmake boost@1.85 openssl@3 pkg-config git
 ```
 
 ### Linux (Ubuntu/Debian)
 ```bash
-sudo apt-get install build-essential cmake libboost-all-dev libjsoncpp-dev libssl-dev git
+sudo apt-get install build-essential cmake libboost-all-dev libssl-dev git
 ```
 
 ### Windows
@@ -95,7 +95,7 @@ Open a **Developer Command Prompt for VS 2022** (or 2019).
 ```cmd
 git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
 C:\vcpkg\bootstrap-vcpkg.bat
-C:\vcpkg\vcpkg install boost-system boost-filesystem boost-thread jsoncpp openssl --triplet x64-windows
+C:\vcpkg\vcpkg install boost-system boost-filesystem boost-thread openssl --triplet x64-windows
 ```
 
 ### 2. Clone and prepare the miner

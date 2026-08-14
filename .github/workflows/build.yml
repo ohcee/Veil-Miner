@@ -22,7 +22,7 @@ jobs:
           git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
 
       - name: Dependencies
-        run: brew install cmake boost@1.85 jsoncpp openssl@3 pkg-config
+        run: brew install cmake boost@1.85 openssl@3 pkg-config
 
       - name: Configure
         shell: bash
@@ -40,3 +40,24 @@ jobs:
         shell: bash
         working-directory: veil-progpow-miner/build
         run: ./veilminer/veilminer --version
+
+      # A binary that links a Homebrew dylib dies the moment brew bumps that
+      # library's soname, so refuse to ship one.
+      - name: Check the binary only links system libraries
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          otool -L ./veilminer/veilminer
+          strays=$(otool -L ./veilminer/veilminer | tail -n +2 \
+            | grep -vE '^[[:space:]]+(/usr/lib/|/System/)' || true)
+          if [ -n "$strays" ]; then
+            echo "::error::binary links non-system libraries:"
+            echo "$strays"
+            exit 1
+          fi
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-macos-arm64
+          path: veil-progpow-miner/build/veilminer/veilminer

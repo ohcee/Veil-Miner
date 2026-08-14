@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.16)
 
 include(cmake/cable/bootstrap.cmake)
 
@@ -25,6 +25,10 @@ endif()
 option(ETHDBUS "Build with D-Bus support" OFF)
 option(APICORE "Build with API Server support" ON)
 option(DEVBUILD "Log developer metrics" OFF)
+# Vendor jsoncpp and link it statically so a binary keeps working after the
+# system copy bumps its soname. Turn this off to link the system jsoncpp
+# through pkg-config instead.
+option(SYSTEM_JSONCPP "Link the system jsoncpp instead of the vendored copy" OFF)
 
 # propagates CMake configuration options to the compiler
 function(configureProject)
@@ -60,16 +64,48 @@ if (APPLE)
     if (BREW_BOOST_PREFIX AND EXISTS "${BREW_BOOST_PREFIX}")
         set(BOOST_ROOT "${BREW_BOOST_PREFIX}")
     endif()
+    # Homebrew ships .a alongside .dylib for both of these. Prefer the archives
+    # so the binary survives a brew upgrade that bumps a soname.
+    set(Boost_USE_STATIC_LIBS ON)
+    set(OPENSSL_USE_STATIC_LIBS ON)
 endif()
 find_package(Boost REQUIRED COMPONENTS system filesystem thread)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(JSONCPP REQUIRED jsoncpp)
-add_library(jsoncpp_lib_static INTERFACE IMPORTED)
-target_include_directories(jsoncpp_lib_static INTERFACE ${JSONCPP_INCLUDE_DIRS})
-target_link_libraries(jsoncpp_lib_static INTERFACE ${JSONCPP_LINK_LIBRARIES})
-# Make <json/json.h> resolvable globally (jsoncpp installs under include/json/)
-include_directories(${JSONCPP_INCLUDE_DIRS})
+if (SYSTEM_JSONCPP)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+    add_library(veil_jsoncpp INTERFACE)
+    target_include_directories(veil_jsoncpp INTERFACE ${JSONCPP_INCLUDE_DIRS})
+    target_link_libraries(veil_jsoncpp INTERFACE ${JSONCPP_LINK_LIBRARIES})
+    # Make <json/json.h> resolvable globally (jsoncpp installs under include/json/)
+    include_directories(${JSONCPP_INCLUDE_DIRS})
+else()
+    include(FetchContent)
+    set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
+    set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
+    set(JSONCPP_WITH_PKGCONFIG_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(JSONCPP_WITH_CMAKE_PACKAGE OFF CACHE BOOL "" FORCE)
+    set(JSONCPP_WITH_EXAMPLE OFF CACHE BOOL "" FORCE)
+    set(JSONCPP_STATIC_WINDOWS_RUNTIME OFF CACHE BOOL "" FORCE)
+    set(BUILD_OBJECT_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+    # jsoncpp keys its library type off BUILD_SHARED_LIBS. Force it off for the
+    # subproject only, then put the caller's value back.
+    set(VEIL_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF)
+    # jsoncpp 1.9.x declares a cmake_minimum_required below what CMake 4 accepts.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.16)
+    FetchContent_Declare(jsoncpp
+        GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
+        GIT_TAG 1.9.6
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(jsoncpp)
+    unset(CMAKE_POLICY_VERSION_MINIMUM)
+    set(BUILD_SHARED_LIBS ${VEIL_SAVED_BUILD_SHARED_LIBS})
+    add_library(veil_jsoncpp INTERFACE)
+    target_link_libraries(veil_jsoncpp INTERFACE jsoncpp_static)
+    include_directories(${jsoncpp_SOURCE_DIR}/include)
+endif()
 
 find_package(OpenSSL REQUIRED)
 include_directories(${OPENSSL_INCLUDE_DIR})
@@ -86,6 +122,7 @@ message("-- ETHASHCPU        Build CPU components                         ${ETHA
 message("-- ETHDBUS          Build D-Bus components                       ${ETHDBUS}")
 message("-- APICORE          Build API Server components                  ${APICORE}")
 message("-- DEVBUILD         Build with dev logging                       ${DEVBUILD}")
+message("-- SYSTEM_JSONCPP   Link system jsoncpp (else vendored static)   ${SYSTEM_JSONCPP}")
 message("----------------------------------------------------------------------------")
 message("")
 
