@@ -222,4 +222,3 @@ Yada Miners does not need one.
 - **Which cards a build supports**: CUDA builds bake in SASS for Maxwell through
   Blackwell (`sm_50` to `sm_120`) plus PTX for the newest arch, so future cards can
   still JIT. Pin a single architecture with `-DCOMPUTE=120` to build faster.
-- **Hashrate reference**: M1 Mac mini (8-core) ~1.8 Kh/s CPU. Nvidia RTX 3080 ~15–20 Kh/s GPU.
