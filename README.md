@@ -35,7 +35,9 @@ sudo apt-get install build-essential cmake libboost-all-dev libssl-dev git
 - [Visual Studio 2019 or 2022](https://visualstudio.microsoft.com/) with the **Desktop development with C++** workload
 - [CMake 3.16+](https://cmake.org/download/)
 - [Git for Windows](https://git-scm.com/download/win)
-- [vcpkg](https://github.com/microsoft/vcpkg) for dependencies
+- [vcpkg](https://github.com/microsoft/vcpkg) for dependencies. The clone is pinned to
+  the `2024.07.12` tag: it is the last baseline shipping boost 1.85, and newer boost
+  removed the Process v1 API this code uses. A current vcpkg will not build the miner.
 - **Nvidia GPU**: [CUDA Toolkit 11+](https://developer.nvidia.com/cuda-downloads)
 - **AMD GPU**: AMD drivers include OpenCL — no extra install needed
 
@@ -101,9 +103,9 @@ Open a **Developer Command Prompt for VS 2022** (or 2019).
 
 ### 1. Install vcpkg and dependencies
 ```cmd
-git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+git clone --branch 2024.07.12 https://github.com/microsoft/vcpkg.git C:\vcpkg
 C:\vcpkg\bootstrap-vcpkg.bat
-C:\vcpkg\vcpkg install boost-system boost-filesystem boost-thread openssl --triplet x64-windows
+C:\vcpkg\vcpkg install boost-algorithm boost-array boost-asio boost-bind boost-container-hash boost-dll boost-exception boost-fiber boost-filesystem boost-format boost-lexical-cast boost-lockfree boost-multiprecision boost-process boost-smart-ptr boost-system boost-thread boost-throw-exception openssl --triplet x64-windows
 ```
 
 ### 2. Clone and prepare the miner

@@ -204,10 +204,22 @@ jobs:
           Add-Content $env:GITHUB_ENV "CUDAToolkit_ROOT=$cudadir"
           Add-Content $env:GITHUB_PATH "$cudadir\bin"
 
-      - name: Dependencies (vcpkg)
+      # Pinned to the last vcpkg tag shipping boost 1.85, the same boost the
+      # macOS job builds against. Newer boost removed Process v1, which
+      # Farm.cpp still uses, so the runner's rolling vcpkg cannot build this
+      # code. The port list is everything the sources actually include: vcpkg
+      # boost is modular, unlike brew and apt which ship all of it.
+      - name: Dependencies (vcpkg, pinned)
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install boost-system boost-filesystem boost-thread openssl --triplet x64-windows
+          git clone --depth 1 --branch 2024.07.12 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          & "$env:RUNNER_TEMP\vcpkg\vcpkg" install --triplet x64-windows `
+            boost-algorithm boost-array boost-asio boost-bind boost-container-hash `
+            boost-dll boost-exception boost-fiber boost-filesystem boost-format `
+            boost-lexical-cast boost-lockfree boost-multiprecision boost-process `
+            boost-smart-ptr boost-system boost-thread boost-throw-exception openssl
+          Add-Content $env:GITHUB_ENV "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg"
 
       # Puts cl.exe on PATH; nvcc needs it as the host compiler, and the Ninja
       # generator avoids needing the CUDA Visual Studio integration component.
@@ -220,7 +232,7 @@ jobs:
           mkdir build && cd build
           cmake -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
 
       - name: Build
@@ -255,7 +267,7 @@ jobs:
         working-directory: veil-progpow-miner/build
         run: |
           Copy-Item "$env:CUDA_PATH\bin\nvrtc64*.dll" veilminer\
-          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
+          Copy-Item "$env:VCPKG_ROOT\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
           Get-ChildItem veilminer
 
       - name: Upload binary
