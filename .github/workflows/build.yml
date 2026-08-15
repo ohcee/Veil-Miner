@@ -229,7 +229,6 @@ jobs:
             boost-dll boost-exception boost-fiber boost-filesystem boost-format `
             boost-lexical-cast boost-lockfree boost-multiprecision boost-process `
             boost-smart-ptr boost-system boost-thread boost-throw-exception
-          Add-Content $env:GITHUB_ENV "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg"
 
       # Not from vcpkg: the pinned baseline's openssl port fetches a pkgconf
       # tarball from msys2 mirrors, and msys2 rotates old packages, so those
@@ -253,9 +252,11 @@ jobs:
         working-directory: veil-progpow-miner
         run: |
           mkdir build && cd build
+          # RUNNER_TEMP, not VCPKG_ROOT: the VS dev env exports its own
+          # VCPKG_ROOT pointing at the empty VS-bundled vcpkg.
           cmake -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake" `
             -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
 
       - name: Build
@@ -290,7 +291,7 @@ jobs:
         working-directory: veil-progpow-miner/build
         run: |
           Copy-Item "$env:CUDA_PATH\bin\nvrtc64*.dll" veilminer\
-          Copy-Item "$env:VCPKG_ROOT\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\vcpkg\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
           Copy-Item "$env:OPENSSL_ROOT_DIR\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
           Get-ChildItem veilminer
 
