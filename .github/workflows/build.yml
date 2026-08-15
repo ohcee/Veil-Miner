@@ -134,8 +134,11 @@ jobs:
           set -euo pipefail
           lib=$(find . -name 'libethash-cuda.a' | head -1)
           echo "inspecting $lib"
-          cuobjdump --list-elf "$lib" | head -40
-          if ! cuobjdump --list-elf "$lib" | grep -q 'sm_120'; then
+          # File first, no pipes: grep -q or head quitting early SIGPIPEs
+          # cuobjdump under pipefail.
+          cuobjdump --list-elf "$lib" > "$RUNNER_TEMP/elf.txt"
+          head -40 "$RUNNER_TEMP/elf.txt"
+          if ! grep -q 'sm_120' "$RUNNER_TEMP/elf.txt"; then
             echo "::error::no sm_120 cubin in libethash-cuda.a, RTX 50-series unsupported"
             exit 1
           fi
@@ -356,8 +359,11 @@ jobs:
             -DBOOST_ROOT=/opt/boost -DBoost_USE_STATIC_LIBS=ON \
             -DCMAKE_BUILD_RPATH='$ORIGIN' ..
           cmake --build . --config Release --parallel "$(nproc)"
-          # the fleet this exists for is Ampere; 12.0 cannot bake sm_120
-          cuobjdump --list-elf libethash-cuda/libethash-cuda.a | grep -q sm_86
+          # the fleet this exists for is Ampere; 12.0 cannot bake sm_120.
+          # File first, no pipe: grep -q quitting early SIGPIPEs cuobjdump
+          # under pipefail.
+          cuobjdump --list-elf libethash-cuda/libethash-cuda.a > /tmp/elf.txt
+          grep -q sm_86 /tmp/elf.txt
           echo "sm_86 present"
           # bundle: binary plus nvrtc, so the rig needs only its driver
           mkdir -p veilminer-hiveos
