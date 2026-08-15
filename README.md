@@ -187,6 +187,19 @@ veilminer\Release\veilminer.exe --cuda -P stratum+tcp://WALLET_ADDRESS@POOL_HOST
 ./build/veilminer/veilminer --cpu -P stratum+tcp://YOUR_VEIL_ADDRESS@veil.yadaminers.pl:3334
 ```
 
+### Coming from t-rex or another miner
+Most miners take the pool, wallet and password as separate flags. veilminer packs
+them into one `-P` URL, so this:
+```
+t-rex.exe -o stratum+tcp://veil.yadaminers.pl:3334 -u YOUR_VEIL_ADDRESS -p x
+```
+becomes this:
+```
+veilminer --cuda -P stratum+tcp://YOUR_VEIL_ADDRESS@veil.yadaminers.pl:3334
+```
+If your pool wants a password, it goes after the wallet as `:x` inside the URL.
+Yada Miners does not need one.
+
 ### Show all options
 ```bash
 ./build/veilminer/veilminer --help
