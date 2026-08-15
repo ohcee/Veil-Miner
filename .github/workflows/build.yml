@@ -157,16 +157,26 @@ jobs:
           ldd ./veilminer/veilminer
           ./veilminer/veilminer --version
 
-      # Zero GPUs must be reported and exited cleanly, not crashed on.
+      # Zero GPUs must be reported and exited cleanly, not crashed on. The
+      # miner deliberately exits nonzero when it finds no devices, so the pass
+      # condition is the clean message and no signal death, not exit 0.
       - name: Smoke test with zero GPUs
         shell: bash
         working-directory: veil-progpow-miner/build
         run: |
-          set -euo pipefail
           stub="$RUNNER_TEMP/cudastub"
           export LD_LIBRARY_PATH="$stub:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
-          ./veilminer/veilminer --list-devices
-          echo "exited cleanly"
+          set +e
+          out=$(./veilminer/veilminer --list-devices 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          echo "exit code: $code"
+          if [ "$code" -ge 128 ]; then
+            echo "::error::crashed with signal $((code-128)) on zero GPUs"
+            exit 1
+          fi
+          grep -q "No usable mining devices found" <<< "$out"
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -218,8 +228,21 @@ jobs:
             boost-algorithm boost-array boost-asio boost-bind boost-container-hash `
             boost-dll boost-exception boost-fiber boost-filesystem boost-format `
             boost-lexical-cast boost-lockfree boost-multiprecision boost-process `
-            boost-smart-ptr boost-system boost-thread boost-throw-exception openssl
+            boost-smart-ptr boost-system boost-thread boost-throw-exception
           Add-Content $env:GITHUB_ENV "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg"
+
+      # Not from vcpkg: the pinned baseline's openssl port fetches a pkgconf
+      # tarball from msys2 mirrors, and msys2 rotates old packages, so those
+      # URLs are permanently 404. The boost ports build with b2 and never
+      # touch msys2, which is why they are fine.
+      - name: OpenSSL (choco)
+        shell: pwsh
+        run: |
+          choco install openssl -y --no-progress
+          $root = "C:\Program Files\OpenSSL-Win64"
+          if (-not (Test-Path $root)) { $root = "C:\Program Files\OpenSSL" }
+          if (-not (Test-Path "$root\include\openssl\ssl.h")) { throw "OpenSSL headers missing under $root" }
+          Add-Content $env:GITHUB_ENV "OPENSSL_ROOT_DIR=$root"
 
       # Puts cl.exe on PATH; nvcc needs it as the host compiler, and the Ninja
       # generator avoids needing the CUDA Visual Studio integration component.
@@ -268,6 +291,7 @@ jobs:
         run: |
           Copy-Item "$env:CUDA_PATH\bin\nvrtc64*.dll" veilminer\
           Copy-Item "$env:VCPKG_ROOT\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
+          Copy-Item "$env:OPENSSL_ROOT_DIR\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
           Get-ChildItem veilminer
 
       - name: Upload binary

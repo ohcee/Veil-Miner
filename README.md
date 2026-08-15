@@ -105,8 +105,14 @@ Open a **Developer Command Prompt for VS 2022** (or 2019).
 ```cmd
 git clone --branch 2024.07.12 https://github.com/microsoft/vcpkg.git C:\vcpkg
 C:\vcpkg\bootstrap-vcpkg.bat
-C:\vcpkg\vcpkg install boost-algorithm boost-array boost-asio boost-bind boost-container-hash boost-dll boost-exception boost-fiber boost-filesystem boost-format boost-lexical-cast boost-lockfree boost-multiprecision boost-process boost-smart-ptr boost-system boost-thread boost-throw-exception openssl --triplet x64-windows
+C:\vcpkg\vcpkg install boost-algorithm boost-array boost-asio boost-bind boost-container-hash boost-dll boost-exception boost-fiber boost-filesystem boost-format boost-lexical-cast boost-lockfree boost-multiprecision boost-process boost-smart-ptr boost-system boost-thread boost-throw-exception --triplet x64-windows
 ```
+
+OpenSSL comes separately, not from vcpkg: the pinned baseline's openssl port downloads
+build tools from msys2 mirrors that no longer host those files. Install
+[Win64 OpenSSL v3.x](https://slproweb.com/products/Win32OpenSSL.html) (the full
+installer, not the Light one) or `choco install openssl`, then pass
+`-DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL-Win64"` on the cmake line.
 
 ### 2. Clone and prepare the miner
 ```cmd
