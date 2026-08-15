@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <libdevcore/Common.h>
 #include <libdevcore/Exceptions.h>
 #include <libdevcore/Worker.h>

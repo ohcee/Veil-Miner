@@ -1,6 +1,7 @@
 name: build
 
-# Verifies the macOS (Apple Silicon) CPU build from the README on every push.
+# Verifies the macOS (Apple Silicon) CPU build and the Linux and Windows CUDA
+# builds on every push. Runners have no GPU, so the CUDA jobs are compile-only.
 on:
   push:
     branches: [ master ]
@@ -61,3 +62,241 @@ jobs:
         with:
           name: veilminer-macos-arm64
           path: veil-progpow-miner/build/veilminer/veilminer
+
+  linux-cuda:
+    name: linux-cuda (${{ matrix.cuda }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 12.x is the widest window: Maxwell through Blackwell in one binary.
+        # CUDA 13 dropped sm_50..sm_70 offline compilation, and GTX 900/10-series
+        # cards are still common on small-coin networks, so it is not the default.
+        cuda: ["12.9.1"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libboost-all-dev libssl-dev
+
+      - name: Install CUDA ${{ matrix.cuda }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.cuda }}"
+          pkgver="$(echo "$ver" | cut -d. -f1-2 | tr '.' '-')"
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          # Just the compiler and the headers/libs this actually links. The full
+          # cuda-toolkit metapackage is several GB and mostly unused here.
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-${pkgver} \
+            cuda-cudart-dev-${pkgver} \
+            cuda-nvrtc-dev-${pkgver} \
+            cuda-driver-dev-${pkgver} \
+            cuda-cuobjdump-${pkgver}
+          cudadir="/usr/local/cuda-$(echo "$ver" | cut -d. -f1-2)"
+          echo "CUDA_PATH=$cudadir" >> "$GITHUB_ENV"
+          echo "CUDAToolkit_ROOT=$cudadir" >> "$GITHUB_ENV"
+          echo "CUDACXX=$cudadir/bin/nvcc" >> "$GITHUB_ENV"
+          echo "$cudadir/bin" >> "$GITHUB_PATH"
+
+      - name: nvcc version
+        run: nvcc --version
+
+      - name: Configure
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          mkdir build && cd build
+          cmake -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
+
+      - name: Build
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: cmake --build . --config Release --parallel
+
+      - name: Confirm Blackwell SASS is in the archive
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          set -euo pipefail
+          lib=$(find . -name 'libethash-cuda.a' | head -1)
+          echo "inspecting $lib"
+          cuobjdump --list-elf "$lib" | head -40
+          if ! cuobjdump --list-elf "$lib" | grep -q 'sm_120'; then
+            echo "::error::no sm_120 cubin in libethash-cuda.a, RTX 50-series unsupported"
+            exit 1
+          fi
+          echo "sm_120 present"
+
+      # The runner has no NVIDIA driver, so the real libcuda.so.1 is absent and
+      # the binary would not even load. Point the loader at the toolkit stub,
+      # which resolves the symbols and reports no device, exactly the path a
+      # user with a broken driver install hits.
+      - name: Smoke test
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          set -euo pipefail
+          stub="$RUNNER_TEMP/cudastub"
+          mkdir -p "$stub"
+          ln -sf "$CUDA_PATH/lib64/stubs/libcuda.so" "$stub/libcuda.so.1"
+          export LD_LIBRARY_PATH="$stub:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ldd ./veilminer/veilminer
+          ./veilminer/veilminer --version
+
+      # Zero GPUs must be reported and exited cleanly, not crashed on. The
+      # miner deliberately exits nonzero when it finds no devices, so the pass
+      # condition is the clean message and no signal death, not exit 0.
+      - name: Smoke test with zero GPUs
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          stub="$RUNNER_TEMP/cudastub"
+          export LD_LIBRARY_PATH="$stub:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+          set +e
+          out=$(./veilminer/veilminer --list-devices 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          echo "exit code: $code"
+          if [ "$code" -ge 128 ]; then
+            echo "::error::crashed with signal $((code-128)) on zero GPUs"
+            exit 1
+          fi
+          grep -q "No usable mining devices found" <<< "$out"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-linux-x64-cuda-${{ matrix.cuda }}
+          path: veil-progpow-miner/build/veilminer/veilminer
+
+  windows-cuda:
+    name: windows-cuda (12.9.1)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Install CUDA 12.9.1
+        shell: pwsh
+        run: |
+          $ver = "12.9.1"
+          $short = "12.9"
+          $url = "https://developer.download.nvidia.com/compute/cuda/$ver/network_installers/cuda_${ver}_windows_network.exe"
+          Invoke-WebRequest -Uri $url -OutFile cuda_net.exe
+          # Silent install of just the compile-time pieces. nvrtc_ is the DLL
+          # the miner needs at runtime, nvrtc_dev_ is the import lib and headers.
+          Start-Process -Wait -FilePath .\cuda_net.exe `
+            -ArgumentList "-s","nvcc_$short","cudart_$short","nvrtc_$short","nvrtc_dev_$short","cuobjdump_$short"
+          $cudadir = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$short"
+          if (-not (Test-Path "$cudadir\bin\nvcc.exe")) { throw "nvcc missing after CUDA install" }
+          Add-Content $env:GITHUB_ENV "CUDA_PATH=$cudadir"
+          Add-Content $env:GITHUB_ENV "CUDAToolkit_ROOT=$cudadir"
+          Add-Content $env:GITHUB_PATH "$cudadir\bin"
+
+      # Pinned to the last vcpkg tag shipping boost 1.85, the same boost the
+      # macOS job builds against. Newer boost removed Process v1, which
+      # Farm.cpp still uses, so the runner's rolling vcpkg cannot build this
+      # code. The port list is everything the sources actually include: vcpkg
+      # boost is modular, unlike brew and apt which ship all of it.
+      - name: Dependencies (vcpkg, pinned)
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch 2024.07.12 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          & "$env:RUNNER_TEMP\vcpkg\vcpkg" install --triplet x64-windows `
+            boost-algorithm boost-array boost-asio boost-bind boost-container-hash `
+            boost-dll boost-exception boost-fiber boost-filesystem boost-format `
+            boost-lexical-cast boost-lockfree boost-multiprecision boost-process `
+            boost-smart-ptr boost-system boost-thread boost-throw-exception
+
+      # Not from the pinned vcpkg: its openssl port fetches a pkgconf tarball
+      # from msys2 mirrors that rotated the file away. Not from choco either:
+      # the community feed threw a 504 and then a 499 on consecutive runs.
+      # The runner's rolling vcpkg has current download URLs, and only openssl
+      # comes from it, so the boost 1.85 pin is unaffected.
+      - name: OpenSSL (rolling vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install openssl --triplet x64-windows
+          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          if (-not (Test-Path "$root\include\openssl\ssl.h")) { throw "OpenSSL headers missing under $root" }
+          Add-Content $env:GITHUB_ENV "OPENSSL_ROOT_DIR=$root"
+
+      # Puts cl.exe on PATH; nvcc needs it as the host compiler, and the Ninja
+      # generator avoids needing the CUDA Visual Studio integration component.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: pwsh
+        working-directory: veil-progpow-miner
+        run: |
+          mkdir build && cd build
+          # RUNNER_TEMP, not VCPKG_ROOT: the VS dev env exports its own
+          # VCPKG_ROOT pointing at the empty VS-bundled vcpkg.
+          cmake -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
+
+      - name: Build
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: cmake --build . --parallel
+
+      - name: Confirm Blackwell SASS is in the archive
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: |
+          $lib = Get-ChildItem -Recurse -Filter "ethash-cuda.lib" | Select-Object -First 1
+          if (-not $lib) { Write-Error "ethash-cuda.lib not found"; exit 1 }
+          "inspecting $($lib.FullName)"
+          $elf = & cuobjdump --list-elf $lib.FullName
+          $elf | Select-Object -First 40
+          if (-not ($elf -match "sm_120")) {
+            Write-Error "no sm_120 cubin in ethash-cuda.lib, RTX 50-series unsupported"
+            exit 1
+          }
+          "sm_120 present"
+
+      # No NVIDIA driver on the runner means no nvcuda.dll, and unlike Linux
+      # there is no stub to point the loader at, so the exe cannot launch here.
+      # Compile plus the cuobjdump gate is as far as this job can prove.
+
+      # Ship everything the exe needs: nvrtc DLLs from the toolkit plus the
+      # boost/openssl DLLs from vcpkg. A zip missing nvrtc64_*.dll dies at
+      # runtime on every user's machine.
+      - name: Bundle runtime DLLs with the binary
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: |
+          Copy-Item "$env:CUDA_PATH\bin\nvrtc64*.dll" veilminer\
+          Copy-Item "$env:RUNNER_TEMP\vcpkg\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
+          Copy-Item "$env:OPENSSL_ROOT_DIR\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
+          Get-ChildItem veilminer
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-windows-x64-cuda-12.9.1
+          path: veil-progpow-miner/build/veilminer/
