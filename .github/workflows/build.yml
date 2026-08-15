@@ -104,7 +104,8 @@ jobs:
             cuda-nvcc-${pkgver} \
             cuda-cudart-dev-${pkgver} \
             cuda-nvrtc-dev-${pkgver} \
-            cuda-driver-dev-${pkgver}
+            cuda-driver-dev-${pkgver} \
+            cuda-cuobjdump-${pkgver}
           cudadir="/usr/local/cuda-$(echo "$ver" | cut -d. -f1-2)"
           echo "CUDA_PATH=$cudadir" >> "$GITHUB_ENV"
           echo "CUDAToolkit_ROOT=$cudadir" >> "$GITHUB_ENV"
@@ -196,7 +197,7 @@ jobs:
           # Silent install of just the compile-time pieces. nvrtc_ is the DLL
           # the miner needs at runtime, nvrtc_dev_ is the import lib and headers.
           Start-Process -Wait -FilePath .\cuda_net.exe `
-            -ArgumentList "-s","nvcc_$short","cudart_$short","nvrtc_$short","nvrtc_dev_$short"
+            -ArgumentList "-s","nvcc_$short","cudart_$short","nvrtc_$short","nvrtc_dev_$short","cuobjdump_$short"
           $cudadir = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$short"
           if (-not (Test-Path "$cudadir\bin\nvcc.exe")) { throw "nvcc missing after CUDA install" }
           Add-Content $env:GITHUB_ENV "CUDA_PATH=$cudadir"
