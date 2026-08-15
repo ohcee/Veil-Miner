@@ -208,7 +208,7 @@ flight sheet pick your coin and wallet, set the miner to Custom, and configure:
 |---|---|
 | Miner name | `veilminer` |
 | Installation URL | `https://github.com/ohcee/Veil-Miner/releases/download/v1.1.3/veilminer-1.1.3.tar.gz` |
-| Hash algorithm | leave as is |
+| Hash algorithm | `progpow-veil` |
 | Wallet and worker template | `%WAL%` |
 | Pool URL | `veil.yadaminers.pl:3334` |
 | Pass | `x` |
