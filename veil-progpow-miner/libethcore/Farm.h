@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <atomic>
 #include <list>
 #include <thread>

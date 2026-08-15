@@ -1,7 +1,7 @@
 name: build
 
-# Verifies the macOS (Apple Silicon) CPU build and the Linux CUDA build on
-# every push. Runners have no GPU, so the CUDA job is compile-only.
+# Verifies the macOS (Apple Silicon) CPU build and the Linux and Windows CUDA
+# builds on every push. Runners have no GPU, so the CUDA jobs are compile-only.
 on:
   push:
     branches: [ master ]
@@ -172,3 +172,93 @@ jobs:
         with:
           name: veilminer-linux-x64-cuda-${{ matrix.cuda }}
           path: veil-progpow-miner/build/veilminer/veilminer
+
+  windows-cuda:
+    name: windows-cuda (12.9.1)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Install CUDA 12.9.1
+        shell: pwsh
+        run: |
+          $ver = "12.9.1"
+          $short = "12.9"
+          $url = "https://developer.download.nvidia.com/compute/cuda/$ver/network_installers/cuda_${ver}_windows_network.exe"
+          Invoke-WebRequest -Uri $url -OutFile cuda_net.exe
+          # Silent install of just the compile-time pieces. nvrtc_ is the DLL
+          # the miner needs at runtime, nvrtc_dev_ is the import lib and headers.
+          Start-Process -Wait -FilePath .\cuda_net.exe `
+            -ArgumentList "-s","nvcc_$short","cudart_$short","nvrtc_$short","nvrtc_dev_$short"
+          $cudadir = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$short"
+          if (-not (Test-Path "$cudadir\bin\nvcc.exe")) { throw "nvcc missing after CUDA install" }
+          Add-Content $env:GITHUB_ENV "CUDA_PATH=$cudadir"
+          Add-Content $env:GITHUB_ENV "CUDAToolkit_ROOT=$cudadir"
+          Add-Content $env:GITHUB_PATH "$cudadir\bin"
+
+      - name: Dependencies (vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install boost-system boost-filesystem boost-thread openssl --triplet x64-windows
+
+      # Puts cl.exe on PATH; nvcc needs it as the host compiler, and the Ninja
+      # generator avoids needing the CUDA Visual Studio integration component.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: pwsh
+        working-directory: veil-progpow-miner
+        run: |
+          mkdir build && cd build
+          cmake -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
+
+      - name: Build
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: cmake --build . --parallel
+
+      - name: Confirm Blackwell SASS is in the archive
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: |
+          $lib = Get-ChildItem -Recurse -Filter "ethash-cuda.lib" | Select-Object -First 1
+          if (-not $lib) { Write-Error "ethash-cuda.lib not found"; exit 1 }
+          "inspecting $($lib.FullName)"
+          $elf = & cuobjdump --list-elf $lib.FullName
+          $elf | Select-Object -First 40
+          if (-not ($elf -match "sm_120")) {
+            Write-Error "no sm_120 cubin in ethash-cuda.lib, RTX 50-series unsupported"
+            exit 1
+          }
+          "sm_120 present"
+
+      # No NVIDIA driver on the runner means no nvcuda.dll, and unlike Linux
+      # there is no stub to point the loader at, so the exe cannot launch here.
+      # Compile plus the cuobjdump gate is as far as this job can prove.
+
+      # Ship everything the exe needs: nvrtc DLLs from the toolkit plus the
+      # boost/openssl DLLs from vcpkg. A zip missing nvrtc64_*.dll dies at
+      # runtime on every user's machine.
+      - name: Bundle runtime DLLs with the binary
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: |
+          Copy-Item "$env:CUDA_PATH\bin\nvrtc64*.dll" veilminer\
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
+          Get-ChildItem veilminer
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-windows-x64-cuda-12.9.1
+          path: veil-progpow-miner/build/veilminer/
