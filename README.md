@@ -230,4 +230,3 @@ Yada Miners does not need one.
   | RTX 3080 | ~23 Mh/s |
   | RTX 3060 Ti | ~19 Mh/s |
   | RTX 3060 | ~14 Mh/s |
-  | M1 Mac mini CPU (8 cores) | ~1.8 Kh/s |
