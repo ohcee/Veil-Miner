@@ -300,3 +300,93 @@ jobs:
         with:
           name: veilminer-windows-x64-cuda-12.9.1
           path: veil-progpow-miner/build/veilminer/
+
+  # HiveOS and similar mining distros run Ubuntu 18.04 (glibc 2.27) with a 525
+  # driver, which caps runtime PTX at CUDA 12.0. The regular linux job's binary
+  # cannot even load there. This builds inside an 18.04 container with CUDA
+  # 12.0 and bundles nvrtc, so a rig needs nothing beyond the driver it has.
+  # Actions cannot run their node runtime on glibc 2.27, so the container is
+  # driven with a plain docker run rather than a container: job.
+  linux-hiveos:
+    name: linux-hiveos (18.04, cuda 12.0)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Build in Ubuntu 18.04 container
+        shell: bash
+        run: |
+          cat > hiveos-build.sh <<'SCRIPT'
+          #!/bin/bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential git wget ca-certificates gnupg libssl-dev pkg-config
+          # bionic apt cmake is 3.10; the Kitware binary runs on glibc 2.17+
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.tar.gz
+          tar -C /opt -xzf cmake-3.27.9-linux-x86_64.tar.gz
+          export PATH=/opt/cmake-3.27.9-linux-x86_64/bin:$PATH
+          # CUDA 12.0: the newest toolkit whose runtime-generated PTX a 525
+          # driver can still JIT, and the ubuntu1804 repo still carries it
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-keyring_1.1-1_all.deb
+          dpkg -i cuda-keyring_1.1-1_all.deb
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            cuda-nvcc-12-0 cuda-cudart-dev-12-0 cuda-nvrtc-dev-12-0 \
+            cuda-driver-dev-12-0 cuda-cuobjdump-12-0
+          export PATH=/usr/local/cuda-12.0/bin:$PATH
+          export CUDAToolkit_ROOT=/usr/local/cuda-12.0
+          export CUDACXX=/usr/local/cuda-12.0/bin/nvcc
+          # boost 1.85 static, built here because bionic ships 1.65
+          wget -q https://archives.boost.io/release/1.85.0/source/boost_1_85_0.tar.gz
+          tar -xzf boost_1_85_0.tar.gz
+          (cd boost_1_85_0 && ./bootstrap.sh --with-libraries=system,filesystem,thread >/dev/null \
+            && ./b2 -j"$(nproc)" link=static variant=release install --prefix=/opt/boost >/dev/null)
+          cd veil-progpow-miner
+          mkdir -p build && cd build
+          cmake -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF \
+            -DBOOST_ROOT=/opt/boost -DBoost_USE_STATIC_LIBS=ON \
+            -DCMAKE_BUILD_RPATH='$ORIGIN' ..
+          cmake --build . --config Release --parallel "$(nproc)"
+          # the fleet this exists for is Ampere; 12.0 cannot bake sm_120
+          cuobjdump --list-elf libethash-cuda/libethash-cuda.a | grep -q sm_86
+          echo "sm_86 present"
+          # bundle: binary plus nvrtc, so the rig needs only its driver
+          mkdir -p veilminer-hiveos
+          cp veilminer/veilminer veilminer-hiveos/
+          cp /usr/local/cuda-12.0/lib64/libnvrtc.so.12* veilminer-hiveos/
+          cp /usr/local/cuda-12.0/lib64/libnvrtc-builtins.so* veilminer-hiveos/
+          # smoke against the driver stub, same rules as the linux job
+          mkdir -p /tmp/cudastub
+          ln -sf /usr/local/cuda-12.0/lib64/stubs/libcuda.so /tmp/cudastub/libcuda.so.1
+          export LD_LIBRARY_PATH=/tmp/cudastub
+          ./veilminer-hiveos/veilminer --version
+          set +e
+          out=$(./veilminer-hiveos/veilminer --list-devices 2>&1); code=$?
+          set -e
+          echo "$out"; echo "exit: $code"
+          if [ "$code" -ge 128 ]; then echo "crashed with signal $((code-128))"; exit 1; fi
+          grep -q "No usable mining devices found" <<< "$out"
+          SCRIPT
+          chmod +x hiveos-build.sh
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:18.04 ./hiveos-build.sh
+
+      - name: Package
+        shell: bash
+        run: |
+          tar -C veil-progpow-miner/build -czf veilminer-hiveos-x64.tar.gz veilminer-hiveos
+          tar -tzf veilminer-hiveos-x64.tar.gz
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-hiveos-x64
+          path: veilminer-hiveos-x64.tar.gz
