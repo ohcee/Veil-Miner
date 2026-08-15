@@ -230,16 +230,16 @@ jobs:
             boost-lexical-cast boost-lockfree boost-multiprecision boost-process `
             boost-smart-ptr boost-system boost-thread boost-throw-exception
 
-      # Not from vcpkg: the pinned baseline's openssl port fetches a pkgconf
-      # tarball from msys2 mirrors, and msys2 rotates old packages, so those
-      # URLs are permanently 404. The boost ports build with b2 and never
-      # touch msys2, which is why they are fine.
-      - name: OpenSSL (choco)
+      # Not from the pinned vcpkg: its openssl port fetches a pkgconf tarball
+      # from msys2 mirrors that rotated the file away. Not from choco either:
+      # the community feed threw a 504 and then a 499 on consecutive runs.
+      # The runner's rolling vcpkg has current download URLs, and only openssl
+      # comes from it, so the boost 1.85 pin is unaffected.
+      - name: OpenSSL (rolling vcpkg)
         shell: pwsh
         run: |
-          choco install openssl -y --no-progress
-          $root = "C:\Program Files\OpenSSL-Win64"
-          if (-not (Test-Path $root)) { $root = "C:\Program Files\OpenSSL" }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install openssl --triplet x64-windows
+          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
           if (-not (Test-Path "$root\include\openssl\ssl.h")) { throw "OpenSSL headers missing under $root" }
           Add-Content $env:GITHUB_ENV "OPENSSL_ROOT_DIR=$root"
 
