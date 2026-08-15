@@ -200,6 +200,22 @@ veilminer --cuda -P stratum+tcp://YOUR_VEIL_ADDRESS@veil.yadaminers.pl:3334
 If your pool wants a password, it goes after the wallet as `:x` inside the URL.
 Yada Miners does not need one.
 
+### HiveOS flight sheet
+The release ships a ready made custom miner package, source in `hiveos/`. In the
+flight sheet pick your coin and wallet, set the miner to Custom, and configure:
+
+| Field | Value |
+|---|---|
+| Miner name | `veilminer` |
+| Installation URL | `https://github.com/ohcee/Veil-Miner/releases/download/v1.1.3/veilminer-1.1.3.tar.gz` |
+| Hash algorithm | leave as is |
+| Wallet and worker template | `%WAL%` |
+| Pool URL | `veil.yadaminers.pl:3334` |
+| Pass | `x` |
+
+The dashboard gets per card hashrate, temps, fans and share counts through the
+miner's api. Anything in Extra config arguments is appended to the command line.
+
 ### Show all options
 ```bash
 ./build/veilminer/veilminer --help

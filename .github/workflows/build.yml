@@ -394,8 +394,29 @@ jobs:
           tar -C veil-progpow-miner/build -czf veilminer-hiveos-x64.tar.gz veilminer-hiveos
           tar -tzf veilminer-hiveos-x64.tar.gz
 
+      # The same bundle wrapped as a HiveOS custom miner: the h-files in
+      # hiveos/ plus the binary, installable straight from a flight sheet
+      # Installation URL. Inner directory name must equal CUSTOM_NAME.
+      - name: Package flight sheet custom miner
+        shell: bash
+        run: |
+          source hiveos/h-manifest.conf
+          mkdir -p pkg/"$CUSTOM_NAME"
+          cp -a veil-progpow-miner/build/veilminer-hiveos/. pkg/"$CUSTOM_NAME"/
+          cp -a hiveos/h-manifest.conf hiveos/h-config.sh hiveos/h-run.sh hiveos/h-stats.sh pkg/"$CUSTOM_NAME"/
+          chmod +x pkg/"$CUSTOM_NAME"/h-config.sh pkg/"$CUSTOM_NAME"/h-run.sh pkg/"$CUSTOM_NAME"/h-stats.sh pkg/"$CUSTOM_NAME"/veilminer
+          tar -C pkg -czf "veilminer-$CUSTOM_VERSION.tar.gz" "$CUSTOM_NAME"
+          tar -tzf "veilminer-$CUSTOM_VERSION.tar.gz"
+          echo "HIVE_PKG=veilminer-$CUSTOM_VERSION.tar.gz" >> "$GITHUB_ENV"
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: veilminer-hiveos-x64
           path: veilminer-hiveos-x64.tar.gz
+
+      - name: Upload flight sheet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-hiveos-flightsheet
+          path: ${{ env.HIVE_PKG }}
