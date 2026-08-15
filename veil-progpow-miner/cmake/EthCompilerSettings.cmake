@@ -40,7 +40,10 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 	# disable unknown pragma warnings (C4068)
 	# disable conversion from 'size_t' to 'type', possible loss of data (C4267)
 	# disable C++ exception specification ignored except to indicate a function is not __declspec(nothrow) (C4290)
-	add_compile_options(/MP /EHsc /GL /wd4068 /wd4267 /wd4290)
+	# C and C++ only: with CUDA as a first-class language these would reach
+	# nvcc bare, which reads slash flags as input files and dies. nvcc's host
+	# pass already gets /EHsc via CMake's CUDA defaults.
+	add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/MP;/EHsc;/GL;/wd4068;/wd4267;/wd4290>")
 
 	# enable LTCG for faster builds
 	set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /LTCG")
