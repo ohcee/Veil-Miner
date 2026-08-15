@@ -15,6 +15,7 @@ You should have received a copy of the GNU General Public License
 along with veilminer.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 
@@ -347,7 +348,20 @@ void CUDAMiner::asyncCompile()
 
     cuCtxSetCurrent(m_context);
 
-    compileKernel(m_nextProgpowPeriod, m_epochContext.dagNumItems / 2, m_kernel[m_kernelCompIx]);
+    // This runs on its own thread: an exception escaping here is
+    // std::terminate, which on Windows is a silent crash with no clue for the
+    // user. Say what happened, then exit.
+    try
+    {
+        compileKernel(m_nextProgpowPeriod, m_epochContext.dagNumItems / 2, m_kernel[m_kernelCompIx]);
+    }
+    catch (std::runtime_error const& _e)
+    {
+        cudalog << "GPU kernel compile failed: " << _e.what();
+        cudalog << "The miner cannot run without this kernel. If the error mentions "
+                   "builtins, an nvrtc library is missing next to the miner binary.";
+        std::exit(1);
+    }
 
     setThreadName(saveName.c_str());
 

@@ -293,7 +293,10 @@ jobs:
         shell: pwsh
         working-directory: veil-progpow-miner/build
         run: |
-          Copy-Item "$env:CUDA_PATH\bin\nvrtc64*.dll" veilminer\
+          # nvrtc*.dll, not nvrtc64*.dll: nvrtc dynamically loads its
+          # companion nvrtc-builtins64 DLL and dies without it, which is a
+          # silent crash in the field
+          Copy-Item "$env:CUDA_PATH\bin\nvrtc*.dll" veilminer\
           Copy-Item "$env:RUNNER_TEMP\vcpkg\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
           Copy-Item "$env:OPENSSL_ROOT_DIR\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
           Get-ChildItem veilminer
