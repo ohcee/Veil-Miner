@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include "vector_ref.h"
 
 #include <string>

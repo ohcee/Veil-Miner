@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <regex>
 
 #include <boost/asio.hpp>
