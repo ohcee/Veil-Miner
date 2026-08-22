@@ -10,7 +10,24 @@ file(GLOB HEADERS "*.h")
 
 add_executable(${EXECUTABLE} ${SRC_LIST} ${HEADERS})
 if(MSVC)
-	target_sources(${EXECUTABLE} PRIVATE veilminer.rc)
+	# Windows resource: the icon plus a VERSIONINFO block, configured from
+	# veilminer.rc.in so the version tracks PROJECT_VERSION on its own.
+	# FILEVERSION wants four plain numbers, so 1.1.3 becomes 1,1,3,0 and a
+	# suffix such as rc1 is dropped from the numeric part.
+	string(REGEX MATCH "^[0-9]+(\\.[0-9]+)*" _rc_version "${PROJECT_VERSION}")
+	string(REPLACE "." ";" _rc_version "${_rc_version}")
+	list(LENGTH _rc_version _rc_len)
+	while(_rc_len LESS 4)
+		list(APPEND _rc_version 0)
+		list(LENGTH _rc_version _rc_len)
+	endwhile()
+	list(SUBLIST _rc_version 0 4 _rc_version)
+	string(REPLACE ";" "," VEILMINER_RC_VERSION "${_rc_version}")
+	configure_file(veilminer.rc.in ${CMAKE_CURRENT_BINARY_DIR}/veilminer.rc @ONLY)
+	# rc.exe resolves the icon relative to the .rc it is compiling, and that
+	# now lives in the build tree, so the icon goes next to it.
+	configure_file(veilminer.ico ${CMAKE_CURRENT_BINARY_DIR}/veilminer.ico COPYONLY)
+	target_sources(${EXECUTABLE} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/veilminer.rc)
 endif()
 
 # Use bundled CLI11 v1.9.1 header — system CLI11 is v2.x with incompatible API
