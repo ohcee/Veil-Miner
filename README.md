@@ -7,6 +7,7 @@ Veil ProgPOW miner with CPU mining support for Apple Silicon (ARM) and GPU minin
 - [Building on Linux](#building-on-linux)
 - [Building on Windows](#building-on-windows)
 - [Running the miner](#running-the-miner)
+- [Verifying a download](#verifying-a-download)
 - [Notes](#notes)
 
 ---
@@ -219,6 +220,28 @@ miner's api. Anything in Extra config arguments is appended to the command line.
 ### Show all options
 ```bash
 ./build/veilminer/veilminer --help
+```
+
+---
+
+## Verifying a download
+
+Every release ships a `SHA256SUMS.txt` written by the same CI run that built the
+archives, so you can confirm the file you downloaded is the one CI produced before
+you run it or add an antivirus exclusion for it. Put it next to the archive and run:
+
+```bash
+# Linux
+sha256sum -c SHA256SUMS.txt --ignore-missing
+
+# macOS
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+```
+
+```powershell
+# Windows, prints True when the zip matches its line in SHA256SUMS.txt
+$zip = "veilminer-v1.1.3-windows-x64-cuda12.9.zip"
+(Get-FileHash $zip).Hash.ToLower() -eq ((Get-Content SHA256SUMS.txt | Select-String $zip) -split '\s+')[0]
 ```
 
 ---
