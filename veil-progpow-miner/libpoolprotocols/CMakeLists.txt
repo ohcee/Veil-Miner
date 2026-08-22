@@ -13,5 +13,9 @@ set(SOURCES
 find_package(OpenSSL REQUIRED)
 
 add_library(poolprotocols ${SOURCES})
-target_link_libraries(poolprotocols PRIVATE devcore veilminer-buildinfo ethash::ethash Boost::system jsoncpp_lib_static OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(poolprotocols PRIVATE devcore veilminer-buildinfo ethash::ethash Boost::system veil_jsoncpp OpenSSL::SSL OpenSSL::Crypto)
+if(WIN32)
+	# EthStratumClient reads the Windows certificate store for TLS root CAs
+	target_link_libraries(poolprotocols PRIVATE crypt32)
+endif()
 target_include_directories(poolprotocols PRIVATE ..)

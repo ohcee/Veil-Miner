@@ -1,6 +1,10 @@
 name: build
 
-# Verifies the macOS (Apple Silicon) CPU build from the README on every push.
+# Verifies the macOS (Apple Silicon) CPU build and the Linux and Windows CUDA
+# builds on every push. Runners have no GPU, so the CUDA jobs are compile-only.
+# Each job packages its build as the release archive and the checksums job
+# writes one SHA256SUMS.txt over all of them, so a release is those artifacts
+# uploaded as they are.
 on:
   push:
     branches: [ master ]
@@ -22,7 +26,7 @@ jobs:
           git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
 
       - name: Dependencies
-        run: brew install cmake boost@1.85 jsoncpp openssl@3 pkg-config
+        run: brew install cmake boost@1.85 openssl@3 pkg-config
 
       - name: Configure
         shell: bash
@@ -40,3 +44,456 @@ jobs:
         shell: bash
         working-directory: veil-progpow-miner/build
         run: ./veilminer/veilminer --version
+
+      # A binary that links a Homebrew dylib dies the moment brew bumps that
+      # library's soname, so refuse to ship one.
+      - name: Check the binary only links system libraries
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          otool -L ./veilminer/veilminer
+          strays=$(otool -L ./veilminer/veilminer | tail -n +2 \
+            | grep -vE '^[[:space:]]+(/usr/lib/|/System/)' || true)
+          if [ -n "$strays" ]; then
+            echo "::error::binary links non-system libraries:"
+            echo "$strays"
+            exit 1
+          fi
+
+      # The archive is built here rather than by hand afterwards, so the hash
+      # in SHA256SUMS.txt is the hash of what ships. COPYFILE_DISABLE keeps
+      # bsdtar from adding ._ metadata entries.
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(sed -nE 's/^set\(PROJECT_VERSION ([^)]+)\).*/\1/p' veil-progpow-miner/CMakeLists.txt)
+          [ -n "$ver" ] || { echo "::error::could not read PROJECT_VERSION from CMakeLists.txt"; exit 1; }
+          name="veilminer-v$ver-macos-arm64"
+          mkdir -p "pkg/$name"
+          cp veil-progpow-miner/build/veilminer/veilminer "pkg/$name/"
+          COPYFILE_DISABLE=1 tar -C pkg -czf "$name.tar.gz" "$name"
+          tar -tzvf "$name.tar.gz"
+          echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-macos-arm64
+          path: ${{ env.ARCHIVE }}
+
+  linux-cuda:
+    name: linux-cuda (${{ matrix.cuda }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 12.x is the widest window: Maxwell through Blackwell in one binary.
+        # CUDA 13 dropped sm_50..sm_70 offline compilation, and GTX 900/10-series
+        # cards are still common on small-coin networks, so it is not the default.
+        cuda: ["12.9.1"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libboost-all-dev libssl-dev
+
+      - name: Install CUDA ${{ matrix.cuda }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ matrix.cuda }}"
+          pkgver="$(echo "$ver" | cut -d. -f1-2 | tr '.' '-')"
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          # Just the compiler and the headers/libs this actually links. The full
+          # cuda-toolkit metapackage is several GB and mostly unused here.
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-${pkgver} \
+            cuda-cudart-dev-${pkgver} \
+            cuda-nvrtc-dev-${pkgver} \
+            cuda-driver-dev-${pkgver} \
+            cuda-cuobjdump-${pkgver}
+          cudadir="/usr/local/cuda-$(echo "$ver" | cut -d. -f1-2)"
+          echo "CUDA_PATH=$cudadir" >> "$GITHUB_ENV"
+          echo "CUDAToolkit_ROOT=$cudadir" >> "$GITHUB_ENV"
+          echo "CUDACXX=$cudadir/bin/nvcc" >> "$GITHUB_ENV"
+          echo "$cudadir/bin" >> "$GITHUB_PATH"
+
+      - name: nvcc version
+        run: nvcc --version
+
+      - name: Configure
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          mkdir build && cd build
+          cmake -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
+
+      - name: Build
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: cmake --build . --config Release --parallel
+
+      - name: Confirm Blackwell SASS is in the archive
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          set -euo pipefail
+          lib=$(find . -name 'libethash-cuda.a' | head -1)
+          echo "inspecting $lib"
+          # File first, no pipes: grep -q or head quitting early SIGPIPEs
+          # cuobjdump under pipefail.
+          cuobjdump --list-elf "$lib" > "$RUNNER_TEMP/elf.txt"
+          head -40 "$RUNNER_TEMP/elf.txt"
+          if ! grep -q 'sm_120' "$RUNNER_TEMP/elf.txt"; then
+            echo "::error::no sm_120 cubin in libethash-cuda.a, RTX 50-series unsupported"
+            exit 1
+          fi
+          echo "sm_120 present"
+
+      # The runner has no NVIDIA driver, so the real libcuda.so.1 is absent and
+      # the binary would not even load. Point the loader at the toolkit stub,
+      # which resolves the symbols and reports no device, exactly the path a
+      # user with a broken driver install hits.
+      - name: Smoke test
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          set -euo pipefail
+          stub="$RUNNER_TEMP/cudastub"
+          mkdir -p "$stub"
+          ln -sf "$CUDA_PATH/lib64/stubs/libcuda.so" "$stub/libcuda.so.1"
+          export LD_LIBRARY_PATH="$stub:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ldd ./veilminer/veilminer
+          ./veilminer/veilminer --version
+
+      # Zero GPUs must be reported and exited cleanly, not crashed on. The
+      # miner deliberately exits nonzero when it finds no devices, so the pass
+      # condition is the clean message and no signal death, not exit 0.
+      - name: Smoke test with zero GPUs
+        shell: bash
+        working-directory: veil-progpow-miner/build
+        run: |
+          stub="$RUNNER_TEMP/cudastub"
+          export LD_LIBRARY_PATH="$stub:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+          set +e
+          out=$(./veilminer/veilminer --list-devices 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          echo "exit code: $code"
+          if [ "$code" -ge 128 ]; then
+            echo "::error::crashed with signal $((code-128)) on zero GPUs"
+            exit 1
+          fi
+          grep -q "No usable mining devices found" <<< "$out"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(sed -nE 's/^set\(PROJECT_VERSION ([^)]+)\).*/\1/p' veil-progpow-miner/CMakeLists.txt)
+          [ -n "$ver" ] || { echo "::error::could not read PROJECT_VERSION from CMakeLists.txt"; exit 1; }
+          cuda=$(echo "${{ matrix.cuda }}" | cut -d. -f1-2)
+          name="veilminer-v$ver-linux-x64-cuda$cuda"
+          mkdir -p "pkg/$name"
+          cp veil-progpow-miner/build/veilminer/veilminer "pkg/$name/"
+          tar -C pkg -czf "$name.tar.gz" "$name"
+          tar -tzvf "$name.tar.gz"
+          echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-linux-x64-cuda-${{ matrix.cuda }}
+          path: ${{ env.ARCHIVE }}
+
+  windows-cuda:
+    name: windows-cuda (12.9.1)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Install CUDA 12.9.1
+        shell: pwsh
+        run: |
+          $ver = "12.9.1"
+          $short = "12.9"
+          $url = "https://developer.download.nvidia.com/compute/cuda/$ver/network_installers/cuda_${ver}_windows_network.exe"
+          Invoke-WebRequest -Uri $url -OutFile cuda_net.exe
+          # Silent install of just the compile-time pieces. nvrtc_ is the DLL
+          # the miner needs at runtime, nvrtc_dev_ is the import lib and headers.
+          Start-Process -Wait -FilePath .\cuda_net.exe `
+            -ArgumentList "-s","nvcc_$short","cudart_$short","nvrtc_$short","nvrtc_dev_$short","cuobjdump_$short"
+          $cudadir = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$short"
+          if (-not (Test-Path "$cudadir\bin\nvcc.exe")) { throw "nvcc missing after CUDA install" }
+          Add-Content $env:GITHUB_ENV "CUDA_PATH=$cudadir"
+          Add-Content $env:GITHUB_ENV "CUDAToolkit_ROOT=$cudadir"
+          Add-Content $env:GITHUB_PATH "$cudadir\bin"
+
+      # Pinned to the last vcpkg tag shipping boost 1.85, the same boost the
+      # macOS job builds against. Newer boost removed Process v1, which
+      # Farm.cpp still uses, so the runner's rolling vcpkg cannot build this
+      # code. The port list is everything the sources actually include: vcpkg
+      # boost is modular, unlike brew and apt which ship all of it.
+      - name: Dependencies (vcpkg, pinned)
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch 2024.07.12 https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          & "$env:RUNNER_TEMP\vcpkg\vcpkg" install --triplet x64-windows `
+            boost-algorithm boost-array boost-asio boost-bind boost-container-hash `
+            boost-dll boost-exception boost-fiber boost-filesystem boost-format `
+            boost-lexical-cast boost-lockfree boost-multiprecision boost-process `
+            boost-smart-ptr boost-system boost-thread boost-throw-exception
+
+      # Not from the pinned vcpkg: its openssl port fetches a pkgconf tarball
+      # from msys2 mirrors that rotated the file away. Not from choco either:
+      # the community feed threw a 504 and then a 499 on consecutive runs.
+      # The runner's rolling vcpkg has current download URLs, and only openssl
+      # comes from it, so the boost 1.85 pin is unaffected.
+      - name: OpenSSL (rolling vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install openssl --triplet x64-windows
+          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          if (-not (Test-Path "$root\include\openssl\ssl.h")) { throw "OpenSSL headers missing under $root" }
+          Add-Content $env:GITHUB_ENV "OPENSSL_ROOT_DIR=$root"
+
+      # Puts cl.exe on PATH; nvcc needs it as the host compiler, and the Ninja
+      # generator avoids needing the CUDA Visual Studio integration component.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: pwsh
+        working-directory: veil-progpow-miner
+        run: |
+          mkdir build && cd build
+          # RUNNER_TEMP, not VCPKG_ROOT: the VS dev env exports its own
+          # VCPKG_ROOT pointing at the empty VS-bundled vcpkg.
+          cmake -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF ..
+
+      - name: Build
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: cmake --build . --parallel
+
+      - name: Confirm Blackwell SASS is in the archive
+        shell: pwsh
+        working-directory: veil-progpow-miner/build
+        run: |
+          $lib = Get-ChildItem -Recurse -Filter "ethash-cuda.lib" | Select-Object -First 1
+          if (-not $lib) { Write-Error "ethash-cuda.lib not found"; exit 1 }
+          "inspecting $($lib.FullName)"
+          $elf = & cuobjdump --list-elf $lib.FullName
+          $elf | Select-Object -First 40
+          if (-not ($elf -match "sm_120")) {
+            Write-Error "no sm_120 cubin in ethash-cuda.lib, RTX 50-series unsupported"
+            exit 1
+          }
+          "sm_120 present"
+
+      # No NVIDIA driver on the runner means no nvcuda.dll, and unlike Linux
+      # there is no stub to point the loader at, so the exe cannot launch here.
+      # Compile plus the cuobjdump gate is as far as this job can prove.
+
+      # Ship everything the exe needs: nvrtc DLLs from the toolkit plus the
+      # boost/openssl DLLs from vcpkg. A zip missing nvrtc64_*.dll dies at
+      # runtime on every user's machine. Only the exe and the DLLs go in, no
+      # pdb or build leftovers, so the zip is the release asset as is.
+      - name: Package exe with runtime DLLs
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path veil-progpow-miner\CMakeLists.txt -Pattern '^set\(PROJECT_VERSION ([^)]+)\)').Matches[0].Groups[1].Value
+          if (-not $ver) { throw "could not read PROJECT_VERSION from CMakeLists.txt" }
+          $name = "veilminer-v$ver-windows-x64-cuda12.9"
+          New-Item -ItemType Directory -Path "pkg\$name" | Out-Null
+          Copy-Item veil-progpow-miner\build\veilminer\veilminer.exe "pkg\$name\"
+          # nvrtc*.dll, not nvrtc64*.dll: nvrtc dynamically loads its
+          # companion nvrtc-builtins64 DLL and dies without it, which is a
+          # silent crash in the field
+          Copy-Item "$env:CUDA_PATH\bin\nvrtc*.dll" "pkg\$name\"
+          Copy-Item "$env:RUNNER_TEMP\vcpkg\installed\x64-windows\bin\*.dll" "pkg\$name\" -ErrorAction SilentlyContinue
+          Copy-Item "$env:OPENSSL_ROOT_DIR\bin\*.dll" "pkg\$name\" -ErrorAction SilentlyContinue
+          Get-ChildItem "pkg\$name"
+          7z a -tzip "$name.zip" ".\pkg\$name"
+          7z l "$name.zip"
+          Add-Content $env:GITHUB_ENV "ARCHIVE=$name.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-windows-x64-cuda-12.9.1
+          path: ${{ env.ARCHIVE }}
+
+  # HiveOS and similar mining distros run Ubuntu 18.04 (glibc 2.27) with a 525
+  # driver, which caps runtime PTX at CUDA 12.0. The regular linux job's binary
+  # cannot even load there. This builds inside an 18.04 container with CUDA
+  # 12.0 and bundles nvrtc, so a rig needs nothing beyond the driver it has.
+  # Actions cannot run their node runtime on glibc 2.27, so the container is
+  # driven with a plain docker run rather than a container: job.
+  linux-hiveos:
+    name: linux-hiveos (18.04, cuda 12.0)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cmake dependency clones
+        shell: bash
+        working-directory: veil-progpow-miner
+        run: |
+          git clone --depth 1 https://github.com/ethereum/cable cmake/cable
+          git clone --depth 1 https://github.com/hunter-packages/disabled-mode cmake/Hunter/disabled-mode
+
+      - name: Build in Ubuntu 18.04 container
+        shell: bash
+        run: |
+          cat > hiveos-build.sh <<'SCRIPT'
+          #!/bin/bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential git wget ca-certificates gnupg libssl-dev pkg-config
+          # bionic apt cmake is 3.10; the Kitware binary runs on glibc 2.17+
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-x86_64.tar.gz
+          tar -C /opt -xzf cmake-3.27.9-linux-x86_64.tar.gz
+          export PATH=/opt/cmake-3.27.9-linux-x86_64/bin:$PATH
+          # CUDA 12.0: the newest toolkit whose runtime-generated PTX a 525
+          # driver can still JIT, and the ubuntu1804 repo still carries it
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-keyring_1.1-1_all.deb
+          dpkg -i cuda-keyring_1.1-1_all.deb
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            cuda-nvcc-12-0 cuda-cudart-dev-12-0 cuda-nvrtc-dev-12-0 \
+            cuda-driver-dev-12-0 cuda-cuobjdump-12-0
+          export PATH=/usr/local/cuda-12.0/bin:$PATH
+          export CUDAToolkit_ROOT=/usr/local/cuda-12.0
+          export CUDACXX=/usr/local/cuda-12.0/bin/nvcc
+          # boost 1.85 static, built here because bionic ships 1.65
+          wget -q https://archives.boost.io/release/1.85.0/source/boost_1_85_0.tar.gz
+          tar -xzf boost_1_85_0.tar.gz
+          (cd boost_1_85_0 && ./bootstrap.sh --with-libraries=system,filesystem,thread >/dev/null \
+            && ./b2 -j"$(nproc)" link=static variant=release install --prefix=/opt/boost >/dev/null)
+          cd veil-progpow-miner
+          mkdir -p build && cd build
+          cmake -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF \
+            -DBOOST_ROOT=/opt/boost -DBoost_USE_STATIC_LIBS=ON \
+            -DCMAKE_BUILD_RPATH='$ORIGIN' ..
+          cmake --build . --config Release --parallel "$(nproc)"
+          # the fleet this exists for is Ampere; 12.0 cannot bake sm_120.
+          # File first, no pipe: grep -q quitting early SIGPIPEs cuobjdump
+          # under pipefail.
+          cuobjdump --list-elf libethash-cuda/libethash-cuda.a > /tmp/elf.txt
+          grep -q sm_86 /tmp/elf.txt
+          echo "sm_86 present"
+          # bundle: binary plus nvrtc, so the rig needs only its driver
+          mkdir -p veilminer-hiveos
+          cp veilminer/veilminer veilminer-hiveos/
+          cp /usr/local/cuda-12.0/lib64/libnvrtc.so.12* veilminer-hiveos/
+          cp /usr/local/cuda-12.0/lib64/libnvrtc-builtins.so* veilminer-hiveos/
+          # smoke against the driver stub, same rules as the linux job
+          mkdir -p /tmp/cudastub
+          ln -sf /usr/local/cuda-12.0/lib64/stubs/libcuda.so /tmp/cudastub/libcuda.so.1
+          export LD_LIBRARY_PATH=/tmp/cudastub
+          ./veilminer-hiveos/veilminer --version
+          set +e
+          out=$(./veilminer-hiveos/veilminer --list-devices 2>&1); code=$?
+          set -e
+          echo "$out"; echo "exit: $code"
+          if [ "$code" -ge 128 ]; then echo "crashed with signal $((code-128))"; exit 1; fi
+          grep -q "No usable mining devices found" <<< "$out"
+          SCRIPT
+          chmod +x hiveos-build.sh
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:18.04 ./hiveos-build.sh
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(sed -nE 's/^set\(PROJECT_VERSION ([^)]+)\).*/\1/p' veil-progpow-miner/CMakeLists.txt)
+          [ -n "$ver" ] || { echo "::error::could not read PROJECT_VERSION from CMakeLists.txt"; exit 1; }
+          name="veilminer-v$ver-hiveos-x64"
+          tar -C veil-progpow-miner/build -czf "$name.tar.gz" veilminer-hiveos
+          tar -tzf "$name.tar.gz"
+          echo "HIVE_ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+
+      # The same bundle wrapped as a HiveOS custom miner: the h-files in
+      # hiveos/ plus the binary, installable straight from a flight sheet
+      # Installation URL. Inner directory name must equal CUSTOM_NAME.
+      - name: Package flight sheet custom miner
+        shell: bash
+        run: |
+          source hiveos/h-manifest.conf
+          mkdir -p pkg/"$CUSTOM_NAME"
+          cp -a veil-progpow-miner/build/veilminer-hiveos/. pkg/"$CUSTOM_NAME"/
+          cp -a hiveos/h-manifest.conf hiveos/h-config.sh hiveos/h-run.sh hiveos/h-stats.sh pkg/"$CUSTOM_NAME"/
+          chmod +x pkg/"$CUSTOM_NAME"/h-config.sh pkg/"$CUSTOM_NAME"/h-run.sh pkg/"$CUSTOM_NAME"/h-stats.sh pkg/"$CUSTOM_NAME"/veilminer
+          tar -C pkg -czf "veilminer-$CUSTOM_VERSION.tar.gz" "$CUSTOM_NAME"
+          tar -tzf "veilminer-$CUSTOM_VERSION.tar.gz"
+          echo "HIVE_PKG=veilminer-$CUSTOM_VERSION.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-hiveos-x64
+          path: ${{ env.HIVE_ARCHIVE }}
+
+      - name: Upload flight sheet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: veilminer-hiveos-flightsheet
+          path: ${{ env.HIVE_PKG }}
+
+  # One SHA256SUMS.txt over every release archive, computed from the exact
+  # files the build jobs uploaded. A release is those archives plus this
+  # file, so anyone can check a download against it before running it or
+  # adding an antivirus exclusion for it.
+  checksums:
+    name: checksums
+    needs: [macos-arm-cpu, linux-cuda, windows-cuda, linux-hiveos]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download every archive
+        uses: actions/download-artifact@v4
+        with:
+          pattern: veilminer-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write SHA256SUMS.txt
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -l
+          sha256sum veilminer-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload SHA256SUMS.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS.txt

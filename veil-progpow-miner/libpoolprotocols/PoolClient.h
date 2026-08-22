@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <queue>
 
 #include <boost/asio/ip/address.hpp>

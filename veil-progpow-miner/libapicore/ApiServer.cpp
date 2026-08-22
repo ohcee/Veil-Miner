@@ -2,6 +2,8 @@
 
 #include <veilminer/buildinfo.h>
 
+#include <libdevcore/Log.h>
+
 #include <libethcore/Farm.h>
 
 #ifndef HOST_NAME_MAX
@@ -318,7 +320,10 @@ void ApiServer::handle_accept(std::shared_ptr<ApiConnection> session, boost::sys
             }
         });
         m_sessions.push_back(session);
-        cnote << "New API session from " << session->socket().remote_endpoint();
+#ifdef DEV_BUILD
+        if (g_logOptions & LOG_CONNECT)
+            cnote << "New API session from " << session->socket().remote_endpoint();
+#endif
         session->start();
     }
     else
@@ -446,7 +451,10 @@ void ApiConnection::processRequest(Json::Value& jRequest, Json::Value& jResponse
     }
 
     assert(m_is_authenticated);
-    cnote << "API : Method " << _method << " requested";
+#ifdef DEV_BUILD
+    if (g_logOptions & LOG_CONNECT)
+        cnote << "API : Method " << _method << " requested";
+#endif
     if (_method == "miner_getstat1")
     {
         jResponse["result"] = getMinerStat1();
