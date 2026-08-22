@@ -2,6 +2,9 @@ name: build
 
 # Verifies the macOS (Apple Silicon) CPU build and the Linux and Windows CUDA
 # builds on every push. Runners have no GPU, so the CUDA jobs are compile-only.
+# Each job packages its build as the release archive and the checksums job
+# writes one SHA256SUMS.txt over all of them, so a release is those artifacts
+# uploaded as they are.
 on:
   push:
     branches: [ master ]
@@ -57,11 +60,27 @@ jobs:
             exit 1
           fi
 
-      - name: Upload binary
+      # The archive is built here rather than by hand afterwards, so the hash
+      # in SHA256SUMS.txt is the hash of what ships. COPYFILE_DISABLE keeps
+      # bsdtar from adding ._ metadata entries.
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(sed -nE 's/^set\(PROJECT_VERSION ([^)]+)\).*/\1/p' veil-progpow-miner/CMakeLists.txt)
+          [ -n "$ver" ] || { echo "::error::could not read PROJECT_VERSION from CMakeLists.txt"; exit 1; }
+          name="veilminer-v$ver-macos-arm64"
+          mkdir -p "pkg/$name"
+          cp veil-progpow-miner/build/veilminer/veilminer "pkg/$name/"
+          COPYFILE_DISABLE=1 tar -C pkg -czf "$name.tar.gz" "$name"
+          tar -tzvf "$name.tar.gz"
+          echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: veilminer-macos-arm64
-          path: veil-progpow-miner/build/veilminer/veilminer
+          path: ${{ env.ARCHIVE }}
 
   linux-cuda:
     name: linux-cuda (${{ matrix.cuda }})
@@ -181,11 +200,25 @@ jobs:
           fi
           grep -q "No usable mining devices found" <<< "$out"
 
-      - name: Upload binary
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(sed -nE 's/^set\(PROJECT_VERSION ([^)]+)\).*/\1/p' veil-progpow-miner/CMakeLists.txt)
+          [ -n "$ver" ] || { echo "::error::could not read PROJECT_VERSION from CMakeLists.txt"; exit 1; }
+          cuda=$(echo "${{ matrix.cuda }}" | cut -d. -f1-2)
+          name="veilminer-v$ver-linux-x64-cuda$cuda"
+          mkdir -p "pkg/$name"
+          cp veil-progpow-miner/build/veilminer/veilminer "pkg/$name/"
+          tar -C pkg -czf "$name.tar.gz" "$name"
+          tar -tzvf "$name.tar.gz"
+          echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: veilminer-linux-x64-cuda-${{ matrix.cuda }}
-          path: veil-progpow-miner/build/veilminer/veilminer
+          path: ${{ env.ARCHIVE }}
 
   windows-cuda:
     name: windows-cuda (12.9.1)
@@ -288,24 +321,32 @@ jobs:
 
       # Ship everything the exe needs: nvrtc DLLs from the toolkit plus the
       # boost/openssl DLLs from vcpkg. A zip missing nvrtc64_*.dll dies at
-      # runtime on every user's machine.
-      - name: Bundle runtime DLLs with the binary
+      # runtime on every user's machine. Only the exe and the DLLs go in, no
+      # pdb or build leftovers, so the zip is the release asset as is.
+      - name: Package exe with runtime DLLs
         shell: pwsh
-        working-directory: veil-progpow-miner/build
         run: |
+          $ver = (Select-String -Path veil-progpow-miner\CMakeLists.txt -Pattern '^set\(PROJECT_VERSION ([^)]+)\)').Matches[0].Groups[1].Value
+          if (-not $ver) { throw "could not read PROJECT_VERSION from CMakeLists.txt" }
+          $name = "veilminer-v$ver-windows-x64-cuda12.9"
+          New-Item -ItemType Directory -Path "pkg\$name" | Out-Null
+          Copy-Item veil-progpow-miner\build\veilminer\veilminer.exe "pkg\$name\"
           # nvrtc*.dll, not nvrtc64*.dll: nvrtc dynamically loads its
           # companion nvrtc-builtins64 DLL and dies without it, which is a
           # silent crash in the field
-          Copy-Item "$env:CUDA_PATH\bin\nvrtc*.dll" veilminer\
-          Copy-Item "$env:RUNNER_TEMP\vcpkg\installed\x64-windows\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
-          Copy-Item "$env:OPENSSL_ROOT_DIR\bin\*.dll" veilminer\ -ErrorAction SilentlyContinue
-          Get-ChildItem veilminer
+          Copy-Item "$env:CUDA_PATH\bin\nvrtc*.dll" "pkg\$name\"
+          Copy-Item "$env:RUNNER_TEMP\vcpkg\installed\x64-windows\bin\*.dll" "pkg\$name\" -ErrorAction SilentlyContinue
+          Copy-Item "$env:OPENSSL_ROOT_DIR\bin\*.dll" "pkg\$name\" -ErrorAction SilentlyContinue
+          Get-ChildItem "pkg\$name"
+          7z a -tzip "$name.zip" ".\pkg\$name"
+          7z l "$name.zip"
+          Add-Content $env:GITHUB_ENV "ARCHIVE=$name.zip"
 
-      - name: Upload binary
+      - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: veilminer-windows-x64-cuda-12.9.1
-          path: veil-progpow-miner/build/veilminer/
+          path: ${{ env.ARCHIVE }}
 
   # HiveOS and similar mining distros run Ubuntu 18.04 (glibc 2.27) with a 525
   # driver, which caps runtime PTX at CUDA 12.0. The regular linux job's binary
@@ -391,8 +432,13 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          tar -C veil-progpow-miner/build -czf veilminer-hiveos-x64.tar.gz veilminer-hiveos
-          tar -tzf veilminer-hiveos-x64.tar.gz
+          set -euo pipefail
+          ver=$(sed -nE 's/^set\(PROJECT_VERSION ([^)]+)\).*/\1/p' veil-progpow-miner/CMakeLists.txt)
+          [ -n "$ver" ] || { echo "::error::could not read PROJECT_VERSION from CMakeLists.txt"; exit 1; }
+          name="veilminer-v$ver-hiveos-x64"
+          tar -C veil-progpow-miner/build -czf "$name.tar.gz" veilminer-hiveos
+          tar -tzf "$name.tar.gz"
+          echo "HIVE_ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
 
       # The same bundle wrapped as a HiveOS custom miner: the h-files in
       # hiveos/ plus the binary, installable straight from a flight sheet
@@ -409,14 +455,45 @@ jobs:
           tar -tzf "veilminer-$CUSTOM_VERSION.tar.gz"
           echo "HIVE_PKG=veilminer-$CUSTOM_VERSION.tar.gz" >> "$GITHUB_ENV"
 
-      - name: Upload binary
+      - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: veilminer-hiveos-x64
-          path: veilminer-hiveos-x64.tar.gz
+          path: ${{ env.HIVE_ARCHIVE }}
 
       - name: Upload flight sheet package
         uses: actions/upload-artifact@v4
         with:
           name: veilminer-hiveos-flightsheet
           path: ${{ env.HIVE_PKG }}
+
+  # One SHA256SUMS.txt over every release archive, computed from the exact
+  # files the build jobs uploaded. A release is those archives plus this
+  # file, so anyone can check a download against it before running it or
+  # adding an antivirus exclusion for it.
+  checksums:
+    name: checksums
+    needs: [macos-arm-cpu, linux-cuda, windows-cuda, linux-hiveos]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download every archive
+        uses: actions/download-artifact@v4
+        with:
+          pattern: veilminer-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write SHA256SUMS.txt
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -l
+          sha256sum veilminer-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload SHA256SUMS.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS.txt
