@@ -1,0 +1,37 @@
+// Windows resources for veilminer.exe. CMake configures this from
+// veilminer.rc.in and takes the version numbers from PROJECT_VERSION in the
+// top level CMakeLists.txt, so there is nothing to bump in here.
+
+IDI_ICON1 ICON DISCARDABLE "veilminer.ico"
+
+// Without this block the exe carries no publisher or product metadata at all,
+// which is one of the things Defender's heuristics hold against an unsigned
+// binary. It also gives Task Manager and the Properties dialog a real name.
+1 VERSIONINFO
+FILEVERSION    @VEILMINER_RC_VERSION@
+PRODUCTVERSION @VEILMINER_RC_VERSION@
+FILEFLAGSMASK  0x3fL
+FILEFLAGS      0x0L
+FILEOS         0x40004L
+FILETYPE       0x1L
+FILESUBTYPE    0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "Veil Project"
+            VALUE "FileDescription",  "Veil ProgPow miner"
+            VALUE "FileVersion",      "@PROJECT_VERSION@"
+            VALUE "InternalName",     "veilminer"
+            VALUE "LegalCopyright",   "Licensed under the GNU General Public License v3"
+            VALUE "OriginalFilename", "veilminer.exe"
+            VALUE "ProductName",      "Veil Miner"
+            VALUE "ProductVersion",   "@PROJECT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
