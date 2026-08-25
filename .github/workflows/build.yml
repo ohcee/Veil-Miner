@@ -401,6 +401,7 @@ jobs:
           mkdir -p build && cd build
           cmake -DETHASHCUDA=ON -DETHASHCL=OFF -DETHASHCPU=OFF \
             -DBOOST_ROOT=/opt/boost -DBoost_USE_STATIC_LIBS=ON \
+            -DOPENSSL_USE_STATIC_LIBS=ON \
             -DCMAKE_BUILD_RPATH='$ORIGIN' ..
           cmake --build . --config Release --parallel "$(nproc)"
           # the fleet this exists for is Ampere; 12.0 cannot bake sm_120.
@@ -409,6 +410,13 @@ jobs:
           cuobjdump --list-elf libethash-cuda/libethash-cuda.a > /tmp/elf.txt
           grep -q sm_86 /tmp/elf.txt
           echo "sm_86 present"
+          # portability: boost and openssl must be static, so the only runtime
+          # deps left are glibc, the driver (libcuda) and the bundled nvrtc
+          readelf -d veilminer/veilminer > /tmp/dyn.txt
+          if grep -Ei 'NEEDED.*(libssl|libcrypto|libboost)' /tmp/dyn.txt; then
+            echo "::error::binary still links openssl or boost dynamically"; exit 1
+          fi
+          echo "no openssl/boost .so deps, self contained"
           # bundle: binary plus nvrtc, so the rig needs only its driver
           mkdir -p veilminer-hiveos
           cp veilminer/veilminer veilminer-hiveos/
